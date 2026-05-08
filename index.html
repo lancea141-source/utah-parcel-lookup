@@ -3,7 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Utah Parcel Lookup · Lance RE Tools</title>
+<title>Utah Parcel Lookup | Lance Taysom Real Estate</title>
+<meta name="description" content="Search Utah parcel boundaries by parcel ID. View property lines on satellite and topo maps. Export to KML for Google Earth or GeoJSON for Google My Maps.">
+<meta name="author" content="Lance Taysom, Utah Real Estate">
+<meta property="og:title" content="Utah Parcel Lookup">
+<meta property="og:description" content="Search Utah parcel boundaries — view property lines, owner info, acreage, and export to Google Earth.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📍</text></svg>">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -417,12 +423,7 @@
 
   .coord-item span { color: var(--accent2); }
 
-  /* Google Maps embed */
-  #google-map-embed {
-    width: 100%; height: 100%;
-    border: none;
-    display: none;
-  }
+
 </style>
 </head>
 <body>
@@ -466,6 +467,10 @@
       </div>
 
       <div class="status" id="status"></div>
+      <div id="debug-panel" style="display:none;margin-top:10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;font-family:monospace;font-size:11px;color:#8b949e;line-height:1.8;max-height:180px;overflow-y:auto;">
+        <div style="color:#58a6ff;margin-bottom:6px;font-size:10px;letter-spacing:0.1em;">DEBUG OUTPUT</div>
+        <div id="debug-content"></div>
+      </div>
     </div>
 
     <!-- Parcel Header -->
@@ -537,7 +542,7 @@
         <h3>No parcel loaded</h3>
         <p>Search a parcel ID to display its boundary</p>
       </div>
-      <iframe id="google-map-embed" allowfullscreen></iframe>
+      <div id="gmap" style="width:100%;height:100%;display:none;"></div>
     </div>
 
     <div class="coords-bar" id="coords-bar" style="display:none">
@@ -621,38 +626,85 @@ async function lookupParcel() {
   setStatus(`<span class="spinner"></span>Fetching from Utah SGID${paddingNote}…`, 'loading');
   document.getElementById('search-btn').disabled = true;
 
-  const serviceUrl = COUNTY_SERVICES[county];
+  // Show debug panel
+  const debugPanel = document.getElementById('debug-panel');
+  const debugContent = document.getElementById('debug-content');
+  debugPanel.style.display = 'block';
+  debugContent.innerHTML = '';
 
-  // Try multiple field name patterns for the WHERE clause
-  const queries = [
-    `PARCEL_ID='${parcelId}'`,
-    `ParcelID='${parcelId}'`,
-    `SERIAL='${parcelId}'`,
-    `PARCEL_ID LIKE '%${parcelId}%'`,
-  ];
+  function dbg(msg) {
+    debugContent.innerHTML += msg + '<br>';
+    debugPanel.scrollTop = debugPanel.scrollHeight;
+  }
+
+  const serviceUrl = COUNTY_SERVICES[county];
+  dbg(`County: ${county} | Service: ${serviceUrl.split('/').pop()}`);
+  dbg(`Raw: "${rawId}" | Padded: "${parcelId}" | Stripped: "${rawId.replace(/^0+/,'') || '0'}"`);
+
+  // Step 1: discover real field names from service metadata
+  let knownFields = ['PARCEL_ID', 'ParcelID', 'SERIAL', 'PARCELID', 'APN', 'PARCEL_NO', 'PID', 'ACCOUNT'];
+  try {
+    const metaRes = await fetch(`${serviceUrl}?f=json`);
+    const meta = await metaRes.json();
+    if (meta.fields) {
+      const serviceFields = meta.fields.map(f => f.name);
+      const parcelLike = serviceFields.filter(n => /parcel|serial|apn|pid|account/i.test(n));
+      knownFields = [...new Set([...parcelLike, ...knownFields])];
+      dbg(`All fields: ${serviceFields.join(', ')}`);
+      dbg(`Parcel-like fields: ${parcelLike.join(', ') || 'NONE FOUND'}`);
+    } else {
+      dbg('WARNING: No fields returned from service metadata');
+    }
+  } catch(e) { dbg(`Metadata fetch error: ${e.message}`); }
+
+  // Step 2: all ID variants — raw input, padded, and zero-stripped
+  const rawStripped = rawId.replace(/^0+/, '') || '0';
+  const idVariants = [...new Set([rawId, parcelId, rawStripped])];
+
+  // Step 3: exact queries first, LIKE wildcards as fallback
+  const queries = [];
+  for (const id of idVariants) {
+    for (const field of knownFields) {
+      queries.push({ w: `${field}='${id}'` });
+    }
+  }
+  for (const field of knownFields.slice(0, 5)) {
+    queries.push({ w: `${field} LIKE '%${rawStripped}%'` });
+  }
 
   let data = null;
   let successQuery = null;
+  const tried = [];
 
-  for (const where of queries) {
+  dbg(`Trying ${queries.length} queries...`);
+  for (const q of queries) {
     try {
-      const url = `${serviceUrl}/query?where=${encodeURIComponent(where)}&outFields=*&outSR=4326&f=geojson`;
+      const url = `${serviceUrl}/query?where=${encodeURIComponent(q.w)}&outFields=*&outSR=4326&f=geojson`;
+      tried.push(q.w);
+      dbg(`→ ${q.w}`);
       const res = await fetch(url);
       const json = await res.json();
+      if (json.error) { dbg(`  ✗ API error: ${json.error.message}`); continue; }
       if (json.features && json.features.length > 0) {
         data = json;
-        successQuery = where;
+        successQuery = q.w;
+        dbg(`✓ MATCH on: ${q.w}`);
         break;
+      } else {
+        dbg(`  ✗ 0 results`);
       }
-    } catch (e) {
-      // try next
-    }
+    } catch (e) { dbg(`  ✗ fetch error: ${e.message}`); }
   }
 
   document.getElementById('search-btn').disabled = false;
 
   if (!data || !data.features || data.features.length === 0) {
-    setStatus(`No parcel found for ID "${parcelId}" in ${county} County. Try a different county or check the ID format.`, 'error');
+    console.log('All queries tried:', tried);
+    setStatus(
+      `No parcel found for "${rawId}" in ${county} County — tried ${tried.length} query combinations.<br>` +
+      `<span style="font-size:10px;opacity:0.7">Open browser console (F12) to see all queries attempted.</span>`,
+      'error'
+    );
     return;
   }
 
@@ -724,12 +776,43 @@ function formatVal(val, key) {
   return val;
 }
 
+// ── Leaflet map setup ──
+let lmap = null;
+let parcelLayer = null;
+
+const TILE_LAYERS = {
+  satellite: {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attr: 'Esri World Imagery'
+  },
+  roadmap: {
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attr: '© OpenStreetMap contributors'
+  },
+  terrain: {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    attr: 'Esri World Topo Map'
+  }
+};
+
+let currentTileLayer = null;
+
+function ensureMap(centroid) {
+  const mapDiv = document.getElementById('gmap');
+  if (!lmap) {
+    lmap = L.map(mapDiv, { zoomControl: true, attributionControl: true });
+    const tl = TILE_LAYERS[currentMapMode];
+    currentTileLayer = L.tileLayer(tl.url, { attribution: tl.attr, maxZoom: 20 }).addTo(lmap);
+    lmap.setView([centroid.lat, centroid.lng], 17);
+  }
+}
+
 // ── Render Map ──
 function renderMap(feature) {
   const coords = extractCoords(feature);
   if (!coords) return;
 
-  const { centroid, bbox, allPoints } = coords;
+  const { centroid, allPoints } = coords;
 
   // Update coords bar
   document.getElementById('coords-bar').style.display = 'flex';
@@ -738,31 +821,57 @@ function renderMap(feature) {
   document.getElementById('coord-acres').textContent = (feature.properties.ACRE || feature.properties.GIS_ACRES || '?');
   document.getElementById('coord-pts').textContent = allPoints.length;
 
-  updateMapEmbed(centroid, bbox);
-}
+  // Show map div, hide placeholder
+  document.getElementById('gmap').style.display = 'block';
+  document.getElementById('map-placeholder').style.display = 'none';
 
-function updateMapEmbed(centroid, bbox) {
-  const embed = document.getElementById('google-map-embed');
-  const placeholder = document.getElementById('map-placeholder');
+  ensureMap(centroid);
 
-  const mapTypeId = currentMapMode === 'satellite' ? 'k' : currentMapMode === 'terrain' ? 'p' : 'm';
-  const zoom = estimateZoom(bbox);
+  // Clear previous parcel layer
+  if (parcelLayer) { lmap.removeLayer(parcelLayer); parcelLayer = null; }
 
-  // Google Maps embed URL
-  const src = `https://maps.google.com/maps?q=${centroid.lat},${centroid.lng}&t=${mapTypeId}&z=${zoom}&ie=UTF8&iwloc=&output=embed`;
+  // Draw GeoJSON polygon directly
+  parcelLayer = L.geoJSON(feature, {
+    style: {
+      color: '#3b82f6',
+      weight: 2.5,
+      opacity: 1,
+      fillColor: '#3b82f6',
+      fillOpacity: 0.18
+    }
+  }).addTo(lmap);
 
-  embed.src = src;
-  embed.style.display = 'block';
-  placeholder.style.display = 'none';
+  // Bind popup on click
+  const props = feature.properties;
+  const id    = props.PARCEL_ID || props.ParcelID || props.SERIAL || '—';
+  const addr  = [props.PROP_ADDR, props.PROP_CITY, props.PROP_ZIP].filter(Boolean).join(', ') || 'No address on file';
+  const owner = props.OWNER || props.OWN_NAME || '—';
+  const acres = props.ACRE || props.GIS_ACRES || '—';
+
+  parcelLayer.bindPopup(`
+    <div style="font-family:sans-serif;font-size:13px;min-width:200px;line-height:1.7">
+      <b style="font-size:15px">${id}</b><br>
+      ${addr}<br>
+      <span style="color:#666">Owner:</span> ${owner}<br>
+      <span style="color:#666">Acreage:</span> ${acres}
+    </div>
+  `);
+
+  // Fit map to parcel bounds with padding
+  lmap.fitBounds(parcelLayer.getBounds(), { padding: [40, 40] });
+
+  // Trigger resize in case map div just became visible
+  setTimeout(() => lmap.invalidateSize(), 100);
 }
 
 function setMapMode(mode) {
   currentMapMode = mode;
   document.querySelectorAll('.map-mode-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`mode-${mode}`).classList.add('active');
-  if (currentParcel) {
-    const coords = extractCoords(currentParcel);
-    if (coords) updateMapEmbed(coords.centroid, coords.bbox);
+  if (lmap && currentTileLayer) {
+    lmap.removeLayer(currentTileLayer);
+    const tl = TILE_LAYERS[mode];
+    currentTileLayer = L.tileLayer(tl.url, { attribution: tl.attr, maxZoom: 20 }).addTo(lmap);
   }
 }
 
@@ -929,8 +1038,10 @@ document.getElementById('parcel-input').addEventListener('keydown', e => {
 
 // Auto-search on load with the prefilled value
 window.addEventListener('load', () => {
-  setTimeout(lookupParcel, 300);
+  setTimeout(lookupParcel, 500);
 });
 </script>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </body>
 </html>
