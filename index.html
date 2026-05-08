@@ -467,10 +467,7 @@
       </div>
 
       <div class="status" id="status"></div>
-      <div id="debug-panel" style="display:none;margin-top:10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;font-family:monospace;font-size:11px;color:#8b949e;line-height:1.8;max-height:180px;overflow-y:auto;">
-        <div style="color:#58a6ff;margin-bottom:6px;font-size:10px;letter-spacing:0.1em;">DEBUG OUTPUT</div>
-        <div id="debug-content"></div>
-      </div>
+
     </div>
 
     <!-- Parcel Header -->
@@ -488,7 +485,7 @@
         <div class="hint">
           Enter a Utah parcel number above. The data comes directly from the <code>Utah SGID</code> ArcGIS Feature Service — no scraping needed.<br><br>
           <b>Sanpete County</b> IDs auto-pad to 10 digits — just enter the short number like <code>24669</code> and it will search as <code>0000024669</code>.<br><br>
-          Supports any format: <code>24669</code> · <code>55-123-0001</code> · <code>0000024669</code>
+          Supports any format: <code>24669</code> · <code>55-123-0001</code> · <code>0000024669</code> — enter the number exactly as shown in the county records.
         </div>
       </div>
     </div>
@@ -576,19 +573,9 @@ const COUNTY_SERVICES = {
   Summit:      'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Summit/FeatureServer/0',
 };
 
-// Counties that use zero-padded 10-digit parcel IDs
-const PADDED_COUNTIES = {
-  Sanpete: 10,
-  // Add others here as discovered, e.g.: Millard: 10
-};
-
+// Normalize parcel ID - just trim whitespace, no padding needed
 function normalizeParcelId(rawId, county) {
-  const stripped = rawId.trim();
-  if (PADDED_COUNTIES[county]) {
-    const digits = PADDED_COUNTIES[county];
-    return stripped.padStart(digits, '0');
-  }
-  return stripped;
+  return rawId.trim();
 }
 
 // ── Field display config ──
@@ -626,20 +613,7 @@ async function lookupParcel() {
   setStatus(`<span class="spinner"></span>Fetching from Utah SGID${paddingNote}…`, 'loading');
   document.getElementById('search-btn').disabled = true;
 
-  // Show debug panel
-  const debugPanel = document.getElementById('debug-panel');
-  const debugContent = document.getElementById('debug-content');
-  debugPanel.style.display = 'block';
-  debugContent.innerHTML = '';
-
-  function dbg(msg) {
-    debugContent.innerHTML += msg + '<br>';
-    debugPanel.scrollTop = debugPanel.scrollHeight;
-  }
-
   const serviceUrl = COUNTY_SERVICES[county];
-  dbg(`County: ${county} | Service: ${serviceUrl.split('/').pop()}`);
-  dbg(`Raw: "${rawId}" | Padded: "${parcelId}" | Stripped: "${rawId.replace(/^0+/,'') || '0'}"`);
 
   // Step 1: discover real field names from service metadata
   let knownFields = ['PARCEL_ID', 'ParcelID', 'SERIAL', 'PARCELID', 'APN', 'PARCEL_NO', 'PID', 'ACCOUNT'];
@@ -650,12 +624,9 @@ async function lookupParcel() {
       const serviceFields = meta.fields.map(f => f.name);
       const parcelLike = serviceFields.filter(n => /parcel|serial|apn|pid|account/i.test(n));
       knownFields = [...new Set([...parcelLike, ...knownFields])];
-      dbg(`All fields: ${serviceFields.join(', ')}`);
-      dbg(`Parcel-like fields: ${parcelLike.join(', ') || 'NONE FOUND'}`);
-    } else {
-      dbg('WARNING: No fields returned from service metadata');
+      console.log('Fields:', serviceFields);
     }
-  } catch(e) { dbg(`Metadata fetch error: ${e.message}`); }
+  } catch(e) { /* use defaults */ }
 
   // Step 2: all ID variants — raw input, padded, and zero-stripped
   const rawStripped = rawId.replace(/^0+/, '') || '0';
@@ -676,35 +647,26 @@ async function lookupParcel() {
   let successQuery = null;
   const tried = [];
 
-  dbg(`Trying ${queries.length} queries...`);
   for (const q of queries) {
     try {
       const url = `${serviceUrl}/query?where=${encodeURIComponent(q.w)}&outFields=*&outSR=4326&f=geojson`;
       tried.push(q.w);
-      dbg(`→ ${q.w}`);
       const res = await fetch(url);
       const json = await res.json();
-      if (json.error) { dbg(`  ✗ API error: ${json.error.message}`); continue; }
+      if (json.error) continue;
       if (json.features && json.features.length > 0) {
         data = json;
         successQuery = q.w;
-        dbg(`✓ MATCH on: ${q.w}`);
         break;
-      } else {
-        dbg(`  ✗ 0 results`);
       }
-    } catch (e) { dbg(`  ✗ fetch error: ${e.message}`); }
+    } catch (e) { /* try next */ }
   }
 
   document.getElementById('search-btn').disabled = false;
 
   if (!data || !data.features || data.features.length === 0) {
     console.log('All queries tried:', tried);
-    setStatus(
-      `No parcel found for "${rawId}" in ${county} County — tried ${tried.length} query combinations.<br>` +
-      `<span style="font-size:10px;opacity:0.7">Open browser console (F12) to see all queries attempted.</span>`,
-      'error'
-    );
+setStatus(`No parcel found for "${rawId}" in ${county} County. Try a different county or check the ID format.`, 'error');
     return;
   }
 
