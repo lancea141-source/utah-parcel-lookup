@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Utah Parcel Lookup · Lance RE Tools</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #111318;
+    --surface2: #181c24;
+    --border: #252a35;
+    --accent: #3b82f6;
+    --accent2: #22d3ee;
+    --gold: #f59e0b;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --success: #10b981;
+    --error: #ef4444;
+    --mono: 'DM Mono', monospace;
+    --sans: 'Syne', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--surface);
+  }
+
+  .logo-mark {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 800; color: #fff;
+    letter-spacing: -1px;
+  }
+
+  header h1 {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+
+  header p {
+    font-size: 11px;
+    color: var(--muted);
+    font-family: var(--mono);
+    letter-spacing: 0.04em;
+  }
+
+  .header-badge {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent2);
+    background: rgba(34,211,238,0.08);
+    border: 1px solid rgba(34,211,238,0.2);
+    padding: 4px 10px;
+    border-radius: 4px;
+    letter-spacing: 0.06em;
+  }
+
+  /* ── Main layout ── */
+  main {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    flex: 1;
+    height: calc(100vh - 73px);
+  }
+
+  /* ── Left Panel ── */
+  .panel {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .search-section {
+    padding: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  input[type="text"] {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  input[type="text"]:focus {
+    border-color: var(--accent);
+  }
+
+  input[type="text"]::placeholder { color: var(--muted); }
+
+  .search-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+    white-space: nowrap;
+  }
+  .search-btn:hover { background: #2563eb; }
+  .search-btn:active { transform: scale(0.97); }
+  .search-btn:disabled { background: var(--border); cursor: not-allowed; }
+
+  /* County selector */
+  .county-row {
+    margin-top: 10px;
+  }
+  select {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 9px 12px;
+    border-radius: 6px;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+  }
+  select:focus { border-color: var(--accent); }
+
+  /* Status */
+  .status {
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    margin-top: 10px;
+    display: none;
+  }
+  .status.loading { display: block; background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.25); color: var(--accent); }
+  .status.error   { display: block; background: rgba(239,68,68,0.1);  border: 1px solid rgba(239,68,68,0.25);  color: var(--error); }
+  .status.success { display: block; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.25); color: var(--success); }
+
+  /* ── Data Cards ── */
+  .data-section {
+    padding: 20px 24px;
+    flex: 1;
+  }
+
+  .parcel-header {
+    display: none;
+    margin-bottom: 16px;
+  }
+
+  .parcel-id-display {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--accent2);
+    letter-spacing: 0.04em;
+  }
+
+  .parcel-address {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .data-grid {
+    display: grid;
+    gap: 8px;
+  }
+
+  .data-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+
+  .data-card-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .data-card-value {
+    font-size: 14px;
+    color: var(--text);
+    font-weight: 600;
+    word-break: break-all;
+  }
+
+  .data-card-value.mono {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 400;
+  }
+
+  /* ── Actions ── */
+  .actions-section {
+    padding: 16px 24px 24px;
+    border-top: 1px solid var(--border);
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .action-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-decoration: none;
+    width: 100%;
+    text-align: left;
+  }
+
+  .action-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(59,130,246,0.06); }
+  .action-btn.gold { border-color: rgba(245,158,11,0.3); color: var(--gold); }
+  .action-btn.gold:hover { border-color: var(--gold); background: rgba(245,158,11,0.06); }
+  .action-btn.green { border-color: rgba(16,185,129,0.3); color: var(--success); }
+  .action-btn.green:hover { border-color: var(--success); background: rgba(16,185,129,0.06); }
+
+  .action-icon { font-size: 16px; flex-shrink: 0; }
+  .action-sub { font-size: 10px; font-weight: 400; color: var(--muted); font-family: var(--mono); }
+
+  /* ── Map Panel ── */
+  .map-panel {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+  }
+
+  .map-toolbar {
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .map-toolbar-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+  }
+
+  .map-mode-btn {
+    padding: 5px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+  .map-mode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  #map-container {
+    flex: 1;
+    position: relative;
+    background: var(--surface2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #map-iframe {
+    width: 100%; height: 100%;
+    border: none;
+    display: none;
+  }
+
+  .map-placeholder {
+    text-align: center;
+    color: var(--muted);
+  }
+
+  .map-placeholder-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+    opacity: 0.4;
+  }
+
+  .map-placeholder h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+
+  .map-placeholder p {
+    font-size: 13px;
+    font-family: var(--mono);
+  }
+
+  /* Parcel outline canvas */
+  #parcel-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+    display: none;
+  }
+
+  /* Loading spinner */
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid rgba(59,130,246,0.3);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Empty state hint */
+  .hint {
+    padding: 0 24px 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  .hint-title {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .hint code {
+    color: var(--accent2);
+    background: rgba(34,211,238,0.07);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  /* Coords display */
+  .coords-bar {
+    padding: 8px 20px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .coord-item span { color: var(--accent2); }
+
+  /* Google Maps embed */
+  #google-map-embed {
+    width: 100%; height: 100%;
+    border: none;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">LR</div>
+  <div>
+    <h1>Utah Parcel Lookup</h1>
+    <p>Powered by Utah SGID · ArcGIS Feature Services</p>
+  </div>
+  <div class="header-badge">UGRC LIVE DATA</div>
+</header>
+
+<main>
+  <!-- Left Panel -->
+  <div class="panel">
+
+    <div class="search-section">
+      <div class="section-label">Search Parcel</div>
+
+      <div class="county-row" style="margin-bottom:10px">
+        <select id="county-select">
+          <option value="Utah">Utah County (Lehi / Traverse Mountain)</option>
+          <option value="Sanpete" selected>Sanpete County</option>
+          <option value="Salt_Lake">Salt Lake County</option>
+          <option value="Davis">Davis County</option>
+          <option value="Weber">Weber County</option>
+          <option value="Washington">Washington County</option>
+          <option value="Cache">Cache County</option>
+          <option value="Iron">Iron County</option>
+          <option value="Box_Elder">Box Elder County</option>
+          <option value="Tooele">Tooele County</option>
+          <option value="Wasatch">Wasatch County</option>
+          <option value="Summit">Summit County</option>
+        </select>
+      </div>
+
+      <div class="input-row">
+        <input type="text" id="parcel-input" placeholder="e.g. 24669 or 55-123-0001" value="24669" />
+        <button class="search-btn" id="search-btn" onclick="lookupParcel()">Search</button>
+      </div>
+
+      <div class="status" id="status"></div>
+    </div>
+
+    <!-- Parcel Header -->
+    <div class="data-section">
+      <div class="parcel-header" id="parcel-header">
+        <div class="parcel-id-display" id="display-parcel-id">—</div>
+        <div class="parcel-address" id="display-address">—</div>
+      </div>
+
+      <div class="data-grid" id="data-grid"></div>
+
+      <!-- Hint when empty -->
+      <div id="empty-hint">
+        <div class="hint-title">How to use</div>
+        <div class="hint">
+          Enter a Utah parcel number above. The data comes directly from the <code>Utah SGID</code> ArcGIS Feature Service — no scraping needed.<br><br>
+          <b>Sanpete County</b> IDs auto-pad to 10 digits — just enter the short number like <code>24669</code> and it will search as <code>0000024669</code>.<br><br>
+          Supports any format: <code>24669</code> · <code>55-123-0001</code> · <code>0000024669</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="actions-section" id="actions-section">
+      <div class="section-label">Export & View</div>
+      <button class="action-btn" id="btn-maps" onclick="openGoogleMaps()">
+        <span class="action-icon">🗺️</span>
+        <div>
+          <div>Open in Google Maps</div>
+          <div class="action-sub">View boundary overlay in browser</div>
+        </div>
+      </button>
+      <button class="action-btn gold" id="btn-kml" onclick="downloadKML()">
+        <span class="action-icon">🌍</span>
+        <div>
+          <div>Download KML</div>
+          <div class="action-sub">Open in Google Earth Pro</div>
+        </div>
+      </button>
+      <button class="action-btn green" id="btn-geojson" onclick="downloadGeoJSON()">
+        <span class="action-icon">📦</span>
+        <div>
+          <div>Download GeoJSON</div>
+          <div class="action-sub">For Google My Maps / mapping tools</div>
+        </div>
+      </button>
+      <button class="action-btn" id="btn-copy" onclick="copyCoords()">
+        <span class="action-icon">📋</span>
+        <div>
+          <div>Copy Centroid Coords</div>
+          <div class="action-sub">Paste into any mapping app</div>
+        </div>
+      </button>
+    </div>
+  </div>
+
+  <!-- Map Panel -->
+  <div class="map-panel">
+    <div class="map-toolbar">
+      <span class="map-toolbar-label">MAP VIEW</span>
+      <button class="map-mode-btn active" id="mode-satellite" onclick="setMapMode('satellite')">Satellite</button>
+      <button class="map-mode-btn" id="mode-roadmap" onclick="setMapMode('roadmap')">Roadmap</button>
+      <button class="map-mode-btn" id="mode-terrain" onclick="setMapMode('terrain')">Terrain</button>
+    </div>
+
+    <div id="map-container">
+      <div class="map-placeholder" id="map-placeholder">
+        <div class="map-placeholder-icon">📍</div>
+        <h3>No parcel loaded</h3>
+        <p>Search a parcel ID to display its boundary</p>
+      </div>
+      <iframe id="google-map-embed" allowfullscreen></iframe>
+    </div>
+
+    <div class="coords-bar" id="coords-bar" style="display:none">
+      <div class="coord-item">Centroid Lat: <span id="coord-lat">—</span></div>
+      <div class="coord-item">Centroid Lng: <span id="coord-lng">—</span></div>
+      <div class="coord-item">Acreage: <span id="coord-acres">—</span></div>
+      <div class="coord-item">Ring Points: <span id="coord-pts">—</span></div>
+    </div>
+  </div>
+</main>
+
+<script>
+// ── State ──
+let currentParcel = null;
+let currentGeoJSON = null;
+let currentMapMode = 'satellite';
+
+// ── County → Service URL map ──
+const COUNTY_SERVICES = {
+  Utah:        'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Utah/FeatureServer/0',
+  Sanpete:     'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Sanpete/FeatureServer/0',
+  Salt_Lake:   'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_SaltLake/FeatureServer/0',
+  Davis:       'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Davis/FeatureServer/0',
+  Weber:       'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Weber/FeatureServer/0',
+  Washington:  'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Washington/FeatureServer/0',
+  Cache:       'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Cache/FeatureServer/0',
+  Iron:        'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Iron/FeatureServer/0',
+  Box_Elder:   'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_BoxElder/FeatureServer/0',
+  Tooele:      'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Tooele/FeatureServer/0',
+  Wasatch:     'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Wasatch/FeatureServer/0',
+  Summit:      'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Summit/FeatureServer/0',
+};
+
+// Counties that use zero-padded 10-digit parcel IDs
+const PADDED_COUNTIES = {
+  Sanpete: 10,
+  // Add others here as discovered, e.g.: Millard: 10
+};
+
+function normalizeParcelId(rawId, county) {
+  const stripped = rawId.trim();
+  if (PADDED_COUNTIES[county]) {
+    const digits = PADDED_COUNTIES[county];
+    return stripped.padStart(digits, '0');
+  }
+  return stripped;
+}
+
+// ── Field display config ──
+const FIELD_MAP = [
+  { key: 'PARCEL_ID',    label: 'Parcel ID',        mono: true },
+  { key: 'ParcelID',     label: 'Parcel ID',         mono: true },
+  { key: 'SERIAL',       label: 'Serial #',          mono: true },
+  { key: 'OWN_TYPE',     label: 'Owner Type',        mono: false },
+  { key: 'OWNER',        label: 'Owner Name',        mono: false },
+  { key: 'OWN_ADDR',     label: 'Owner Address',     mono: false },
+  { key: 'PROP_ADDR',    label: 'Property Address',  mono: false },
+  { key: 'PROP_CITY',    label: 'City',              mono: false },
+  { key: 'PROP_ZIP',     label: 'ZIP Code',          mono: true  },
+  { key: 'LAND_USE',     label: 'Land Use Code',     mono: true  },
+  { key: 'LAND_USE_DESC',label: 'Land Use',          mono: false },
+  { key: 'ACRE',         label: 'Acreage',           mono: true  },
+  { key: 'GIS_ACRES',    label: 'GIS Acreage',       mono: true  },
+  { key: 'SUBDIV_NAME',  label: 'Subdivision',       mono: false },
+  { key: 'PLAT_LOT',     label: 'Lot',               mono: true  },
+  { key: 'PLAT_BLOCK',   label: 'Block',             mono: true  },
+  { key: 'TAX_DIST',     label: 'Tax District',      mono: true  },
+  { key: 'COUNTY',       label: 'County',            mono: false },
+  { key: 'Shape__Area',  label: 'Shape Area (sq ft)',mono: true  },
+];
+
+// ── Main lookup function ──
+async function lookupParcel() {
+  const rawId    = document.getElementById('parcel-input').value.trim();
+  const county   = document.getElementById('county-select').value;
+  const parcelId = normalizeParcelId(rawId, county);
+
+  if (!rawId) { setStatus('Enter a parcel ID', 'error'); return; }
+
+  const paddingNote = parcelId !== rawId ? ` (padded to <b>${parcelId}</b>)` : '';
+  setStatus(`<span class="spinner"></span>Fetching from Utah SGID${paddingNote}…`, 'loading');
+  document.getElementById('search-btn').disabled = true;
+
+  const serviceUrl = COUNTY_SERVICES[county];
+
+  // Try multiple field name patterns for the WHERE clause
+  const queries = [
+    `PARCEL_ID='${parcelId}'`,
+    `ParcelID='${parcelId}'`,
+    `SERIAL='${parcelId}'`,
+    `PARCEL_ID LIKE '%${parcelId}%'`,
+  ];
+
+  let data = null;
+  let successQuery = null;
+
+  for (const where of queries) {
+    try {
+      const url = `${serviceUrl}/query?where=${encodeURIComponent(where)}&outFields=*&outSR=4326&f=geojson`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.features && json.features.length > 0) {
+        data = json;
+        successQuery = where;
+        break;
+      }
+    } catch (e) {
+      // try next
+    }
+  }
+
+  document.getElementById('search-btn').disabled = false;
+
+  if (!data || !data.features || data.features.length === 0) {
+    setStatus(`No parcel found for ID "${parcelId}" in ${county} County. Try a different county or check the ID format.`, 'error');
+    return;
+  }
+
+  const feature = data.features[0];
+  currentParcel = feature;
+  currentGeoJSON = data;
+
+  setStatus(`✓ Found parcel — ${data.features.length > 1 ? data.features.length + ' matches, showing first' : 'exact match'}`, 'success');
+
+  renderParcelData(feature);
+  renderMap(feature);
+}
+
+// ── Render attribute cards ──
+function renderParcelData(feature) {
+  const props = feature.properties;
+
+  // Header
+  document.getElementById('parcel-header').style.display = 'block';
+  document.getElementById('empty-hint').style.display = 'none';
+
+  const parcelIdVal = props.PARCEL_ID || props.ParcelID || props.SERIAL || '—';
+  const addressVal  = [props.PROP_ADDR, props.PROP_CITY, props.PROP_ZIP].filter(Boolean).join(', ') || 'Address not available';
+
+  document.getElementById('display-parcel-id').textContent = parcelIdVal;
+  document.getElementById('display-address').textContent = addressVal;
+
+  // Data cards
+  const grid = document.getElementById('data-grid');
+  grid.innerHTML = '';
+
+  const shown = new Set();
+
+  FIELD_MAP.forEach(({ key, label, mono }) => {
+    const val = props[key];
+    if (val == null || val === '' || val === 0 || shown.has(label)) return;
+    shown.add(label);
+
+    const card = document.createElement('div');
+    card.className = 'data-card';
+    card.innerHTML = `
+      <div class="data-card-label">${label}</div>
+      <div class="data-card-value ${mono ? 'mono' : ''}">${formatVal(val, key)}</div>
+    `;
+    grid.appendChild(card);
+  });
+
+  // Show any remaining fields not in our map
+  Object.entries(props).forEach(([key, val]) => {
+    if (val == null || val === '' || key.startsWith('Shape') || key === 'OBJECTID') return;
+    if (FIELD_MAP.some(f => f.key === key)) return;
+    const card = document.createElement('div');
+    card.className = 'data-card';
+    card.innerHTML = `
+      <div class="data-card-label">${key}</div>
+      <div class="data-card-value mono">${formatVal(val, key)}</div>
+    `;
+    grid.appendChild(card);
+  });
+
+  document.getElementById('actions-section').style.display = 'flex';
+}
+
+function formatVal(val, key) {
+  if (typeof val === 'number') {
+    if (key.includes('ACRE') || key.includes('AREA')) return val.toFixed(4);
+    return val.toLocaleString();
+  }
+  return val;
+}
+
+// ── Render Map ──
+function renderMap(feature) {
+  const coords = extractCoords(feature);
+  if (!coords) return;
+
+  const { centroid, bbox, allPoints } = coords;
+
+  // Update coords bar
+  document.getElementById('coords-bar').style.display = 'flex';
+  document.getElementById('coord-lat').textContent = centroid.lat.toFixed(6);
+  document.getElementById('coord-lng').textContent = centroid.lng.toFixed(6);
+  document.getElementById('coord-acres').textContent = (feature.properties.ACRE || feature.properties.GIS_ACRES || '?');
+  document.getElementById('coord-pts').textContent = allPoints.length;
+
+  updateMapEmbed(centroid, bbox);
+}
+
+function updateMapEmbed(centroid, bbox) {
+  const embed = document.getElementById('google-map-embed');
+  const placeholder = document.getElementById('map-placeholder');
+
+  const mapTypeId = currentMapMode === 'satellite' ? 'k' : currentMapMode === 'terrain' ? 'p' : 'm';
+  const zoom = estimateZoom(bbox);
+
+  // Google Maps embed URL
+  const src = `https://maps.google.com/maps?q=${centroid.lat},${centroid.lng}&t=${mapTypeId}&z=${zoom}&ie=UTF8&iwloc=&output=embed`;
+
+  embed.src = src;
+  embed.style.display = 'block';
+  placeholder.style.display = 'none';
+}
+
+function setMapMode(mode) {
+  currentMapMode = mode;
+  document.querySelectorAll('.map-mode-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`mode-${mode}`).classList.add('active');
+  if (currentParcel) {
+    const coords = extractCoords(currentParcel);
+    if (coords) updateMapEmbed(coords.centroid, coords.bbox);
+  }
+}
+
+// ── Coord extraction ──
+function extractCoords(feature) {
+  const geo = feature.geometry;
+  if (!geo) return null;
+
+  let allPoints = [];
+
+  function collectPoints(coords) {
+    if (!coords || !coords.length) return;
+    if (typeof coords[0] === 'number') {
+      allPoints.push(coords);
+    } else {
+      coords.forEach(collectPoints);
+    }
+  }
+
+  if (geo.type === 'Polygon') collectPoints(geo.coordinates);
+  else if (geo.type === 'MultiPolygon') geo.coordinates.forEach(p => collectPoints(p));
+
+  if (!allPoints.length) return null;
+
+  const lngs = allPoints.map(p => p[0]);
+  const lats  = allPoints.map(p => p[1]);
+
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+
+  return {
+    centroid: {
+      lat: (minLat + maxLat) / 2,
+      lng: (minLng + maxLng) / 2
+    },
+    bbox: { minLat, maxLat, minLng, maxLng },
+    allPoints
+  };
+}
+
+function estimateZoom(bbox) {
+  const latDiff = bbox.maxLat - bbox.minLat;
+  const lngDiff = bbox.maxLng - bbox.minLng;
+  const maxDiff = Math.max(latDiff, lngDiff);
+  if (maxDiff < 0.002) return 18;
+  if (maxDiff < 0.005) return 17;
+  if (maxDiff < 0.01)  return 16;
+  if (maxDiff < 0.02)  return 15;
+  if (maxDiff < 0.05)  return 14;
+  return 13;
+}
+
+// ── KML Export ──
+function downloadKML() {
+  if (!currentParcel) return;
+
+  const geo = currentParcel.geometry;
+  const props = currentParcel.properties;
+  const name  = props.PARCEL_ID || props.ParcelID || props.SERIAL || 'Parcel';
+  const addr  = props.PROP_ADDR || '';
+  const owner = props.OWNER || '';
+  const acres = props.ACRE || props.GIS_ACRES || '';
+
+  function ringToKML(ring) {
+    return ring.map(([lng, lat]) => `${lng},${lat},0`).join(' ');
+  }
+
+  let placemark = '';
+
+  if (geo.type === 'Polygon') {
+    const outerBoundary = `<outerBoundaryIs><LinearRing><coordinates>${ringToKML(geo.coordinates[0])}</coordinates></LinearRing></outerBoundaryIs>`;
+    const innerBoundaries = geo.coordinates.slice(1).map(r =>
+      `<innerBoundaryIs><LinearRing><coordinates>${ringToKML(r)}</coordinates></LinearRing></innerBoundaryIs>`
+    ).join('');
+    placemark = `<Polygon><altitudeMode>clampToGround</altitudeMode>${outerBoundary}${innerBoundaries}</Polygon>`;
+  } else if (geo.type === 'MultiPolygon') {
+    const polys = geo.coordinates.map(poly => {
+      const ob = `<outerBoundaryIs><LinearRing><coordinates>${ringToKML(poly[0])}</coordinates></LinearRing></outerBoundaryIs>`;
+      return `<Polygon><altitudeMode>clampToGround</altitudeMode>${ob}</Polygon>`;
+    }).join('');
+    placemark = `<MultiGeometry>${polys}</MultiGeometry>`;
+  }
+
+  const descRows = Object.entries(props)
+    .filter(([k, v]) => v != null && v !== '')
+    .map(([k, v]) => `<tr><td><b>${k}</b></td><td>${v}</td></tr>`)
+    .join('');
+
+  const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Utah Parcel ${name}</name>
+    <description>Generated by Lance RE Tools · Utah SGID</description>
+    <Style id="parcelStyle">
+      <LineStyle><color>ff3b82f6</color><width>2</width></LineStyle>
+      <PolyStyle><color>553b82f6</color></PolyStyle>
+    </Style>
+    <Placemark>
+      <name>Parcel ${name}</name>
+      <description><![CDATA[
+        <b>Address:</b> ${addr}<br>
+        <b>Owner:</b> ${owner}<br>
+        <b>Acreage:</b> ${acres}<br><br>
+        <table border="1" cellpadding="4">${descRows}</table>
+      ]]></description>
+      <styleUrl>#parcelStyle</styleUrl>
+      ${placemark}
+    </Placemark>
+  </Document>
+</kml>`;
+
+  downloadFile(`parcel_${name}.kml`, kml, 'application/vnd.google-earth.kml+xml');
+}
+
+// ── GeoJSON Export ──
+function downloadGeoJSON() {
+  if (!currentGeoJSON) return;
+  const name = currentParcel?.properties?.PARCEL_ID || currentParcel?.properties?.ParcelID || 'parcel';
+  downloadFile(`parcel_${name}.geojson`, JSON.stringify(currentGeoJSON, null, 2), 'application/geo+json');
+}
+
+// ── Copy Coords ──
+function copyCoords() {
+  if (!currentParcel) return;
+  const coords = extractCoords(currentParcel);
+  if (!coords) return;
+  const text = `${coords.centroid.lat}, ${coords.centroid.lng}`;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('btn-copy');
+    const orig = btn.querySelector('div div').textContent;
+    btn.querySelector('div div').textContent = 'Copied!';
+    setTimeout(() => btn.querySelector('div div').textContent = orig, 1500);
+  });
+}
+
+// ── Open Google Maps (new tab with search) ──
+function openGoogleMaps() {
+  if (!currentParcel) return;
+  const coords = extractCoords(currentParcel);
+  if (!coords) return;
+  const { lat, lng } = coords.centroid;
+  window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
+}
+
+// ── Utilities ──
+function downloadFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function setStatus(msg, type) {
+  const el = document.getElementById('status');
+  el.className = `status ${type}`;
+  el.innerHTML = msg;
+}
+
+// Allow Enter key to search
+document.getElementById('parcel-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') lookupParcel();
+});
+
+// Auto-search on load with the prefilled value
+window.addEventListener('load', () => {
+  setTimeout(lookupParcel, 300);
+});
+</script>
+</body>
+</html>
