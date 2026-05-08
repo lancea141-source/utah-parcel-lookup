@@ -448,6 +448,7 @@
         <select id="county-select">
           <option value="Utah">Utah County (Lehi / Traverse Mountain)</option>
           <option value="Sanpete" selected>Sanpete County</option>
+          <option value="Duchesne">Duchesne County</option>
           <option value="Salt_Lake">Salt Lake County</option>
           <option value="Davis">Davis County</option>
           <option value="Weber">Weber County</option>
@@ -462,7 +463,7 @@
       </div>
 
       <div class="input-row">
-        <input type="text" id="parcel-input" placeholder="e.g. 24669 or 55-123-0001" value="24669" />
+        <input type="text" id="parcel-input" placeholder="e.g. 24669 or 55-123-0001" />
         <button class="search-btn" id="search-btn" onclick="lookupParcel()">Search</button>
       </div>
 
@@ -561,6 +562,7 @@ let currentMapMode = 'satellite';
 const COUNTY_SERVICES = {
   Utah:        'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Utah/FeatureServer/0',
   Sanpete:     'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Sanpete/FeatureServer/0',
+  Duchesne:    'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Duchesne/FeatureServer/0',
   Salt_Lake:   'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_SaltLake/FeatureServer/0',
   Davis:       'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Davis/FeatureServer/0',
   Weber:       'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/Parcels_Weber/FeatureServer/0',
@@ -998,9 +1000,28 @@ document.getElementById('parcel-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') lookupParcel();
 });
 
-// Auto-search on load with the prefilled value
+// Read URL parameters on load — ?parcel=24669&county=Sanpete
 window.addEventListener('load', () => {
-  setTimeout(lookupParcel, 500);
+  const params = new URLSearchParams(window.location.search);
+  const parcelParam = params.get('parcel');
+  const countyParam = params.get('county');
+
+  if (parcelParam) {
+    document.getElementById('parcel-input').value = parcelParam;
+  }
+  if (countyParam) {
+    const select = document.getElementById('county-select');
+    for (let i = 0; i < select.options.length; i++) {
+      if (select.options[i].value.toLowerCase() === countyParam.toLowerCase()) {
+        select.selectedIndex = i;
+        break;
+      }
+    }
+  }
+  // Auto-search if parcel param was provided
+  if (parcelParam) {
+    setTimeout(lookupParcel, 500);
+  }
 });
 </script>
 
