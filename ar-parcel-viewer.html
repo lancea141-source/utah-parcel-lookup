@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Lance AR — Parcel Viewer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Share+Tech+Mono&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root { --navy: #2F3E46; --terracotta: #C0652A; --olive: #6B7A3A; --camel: #C2A178; --cream: #F4EDE4; --hud-bg: rgba(15,25,30,0.82); --accent: #00FFB2; }
+  body { background: #000; color: var(--cream); font-family: 'Rajdhani', sans-serif; overflow: hidden; height: 100dvh; width: 100vw; }
+  #camera { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+  #hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+  #crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 40px; height: 40px; }
+  #crosshair::before, #crosshair::after { content: ''; position: absolute; background: var(--accent); opacity: 0.7; }
+  #crosshair::before { width: 1px; height: 100%; left: 50%; }
+  #crosshair::after { width: 100%; height: 1px; top: 50%; }
+  .corner { position: absolute; width: 24px; height: 24px; border-color: var(--accent); border-style: solid; opacity: 0.6; }
+  .corner.tl { top: 16px; left: 16px; border-width: 2px 0 0 2px; }
+  .corner.tr { top: 16px; right: 16px; border-width: 2px 2px 0 0; }
+  .corner.bl { bottom: 16px; left: 16px; border-width: 0 0 2px 2px; }
+  .corner.br { bottom: 16px; right: 16px; border-width: 0 2px 2px 0; }
+  #topbar { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%); }
+  #logo-area { display: flex; align-items: center; gap: 10px; }
+  #logo-area img { width: 36px; height: 36px; border-radius: 4px; }
+  #logo-area span { font-weight: 700; font-size: 15px; letter-spacing: 2px; color: var(--cream); text-transform: uppercase; }
+  #status-pill { font-family: 'Share Tech Mono', monospace; font-size: 11px; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--accent); color: var(--accent); background: rgba(0,255,178,0.08); letter-spacing: 1px; }
+  #compass-wrap { position: absolute; top: 70px; right: 20px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  #compass-ring { width: 52px; height: 52px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.3); position: relative; background: var(--hud-bg); display: flex; align-items: center; justify-content: center; }
+  #compass-needle { width: 2px; height: 20px; background: linear-gradient(to bottom, #FF4444 50%, rgba(255,255,255,0.4) 50%); border-radius: 2px; transform-origin: center; transition: transform 0.3s ease; }
+  #compass-label { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--camel); letter-spacing: 1px; }
+  #bearing-val { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--accent); }
+  #gps-info { position: absolute; bottom: 180px; left: 20px; font-family: 'Share Tech Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.5); line-height: 1.6; }
+  #scanline { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px); pointer-events: none; animation: scanmove 8s linear infinite; }
+  @keyframes scanmove { 0% { background-position: 0 0; } 100% { background-position: 0 100px; } }
+  #property-card { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); width: calc(100vw - 40px); max-width: 420px; background: var(--hud-bg); border: 1px solid rgba(255,255,255,0.15); border-top: 2px solid var(--terracotta); border-radius: 12px; padding: 16px 18px; pointer-events: all; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); animation: cardslide 0.5s cubic-bezier(0.22,1,0.36,1) both; }
+  @keyframes cardslide { from { transform: translateX(-50%) translateY(30px); opacity: 0; } to { transform: translateX(-50%) translateY(0); opacity: 1; } }
+  .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+  .card-address { font-weight: 700; font-size: 17px; line-height: 1.2; color: var(--cream); }
+  .card-city { font-size: 13px; color: var(--camel); margin-top: 2px; }
+  .card-badge { background: var(--terracotta); color: white; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; padding: 3px 8px; border-radius: 4px; text-transform: uppercase; white-space: nowrap; }
+  .card-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-bottom: 14px; }
+  .stat { background: rgba(255,255,255,0.05); border-radius: 6px; padding: 7px 8px; text-align: center; }
+  .stat-val { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--accent); display: block; }
+  .stat-lbl { font-size: 10px; color: rgba(255,255,255,0.45); letter-spacing: 0.5px; text-transform: uppercase; }
+  .parcel-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; padding: 8px 10px; background: rgba(255,255,255,0.04); border-radius: 6px; border-left: 3px solid var(--olive); }
+  .parcel-label { font-size: 11px; color: rgba(255,255,255,0.4); text-transform: uppercase; letter-spacing: 1px; }
+  .parcel-id { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--camel); flex: 1; }
+  .btn-boundary { width: 100%; padding: 13px; background: var(--navy); border: 1.5px solid var(--terracotta); border-radius: 8px; color: var(--cream); font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 15px; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: background 0.2s; -webkit-tap-highlight-color: transparent; }
+  .btn-boundary:active { background: var(--terracotta); }
+  #permission-screen, #error-screen { position: fixed; inset: 0; z-index: 100; background: var(--navy); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 30px; text-align: center; gap: 20px; }
+  #permission-screen.hidden, #error-screen.hidden { display: none; }
+  .perm-icon { width: 70px; height: 70px; border-radius: 50%; background: rgba(192,101,42,0.15); border: 2px solid var(--terracotta); display: flex; align-items: center; justify-content: center; font-size: 32px; }
+  .perm-title { font-size: 22px; font-weight: 700; letter-spacing: 1px; color: var(--cream); }
+  .perm-sub { font-size: 14px; color: var(--camel); line-height: 1.6; max-width: 300px; }
+  .btn-perm { padding: 14px 32px; background: var(--terracotta); border: none; border-radius: 8px; color: white; font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; }
+  .distance-badge { position: absolute; top: -28px; left: 50%; transform: translateX(-50%); background: rgba(0,255,178,0.12); border: 1px solid var(--accent); border-radius: 20px; padding: 3px 12px; font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--accent); white-space: nowrap; }
+  .pulse-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); display: inline-block; margin-right: 4px; animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.4; transform:scale(0.7); } }
+</style>
+</head>
+<body>
+<div id="permission-screen">
+  <img src="https://drive.google.com/uc?id=1NosHz-mLGpPckIeBhrQpgtwH5YU_Lu6s" width="64" height="64" style="border-radius:8px" onerror="this.style.display='none'">
+  <div class="perm-icon">📍</div>
+  <div class="perm-title">LANCE AR VIEWER</div>
+  <div class="perm-sub">This tool needs camera access and device orientation to overlay parcel data on the real world.</div>
+  <button class="btn-perm" id="start-btn">ENABLE & START</button>
+</div>
+<div id="error-screen" class="hidden">
+  <div class="perm-icon">⚠️</div>
+  <div class="perm-title">ACCESS REQUIRED</div>
+  <div class="perm-sub" id="error-msg">Camera access was denied. Open in Safari and allow camera access.</div>
+  <button class="btn-perm" onclick="location.reload()">TRY AGAIN</button>
+</div>
+<video id="camera" autoplay playsinline muted></video>
+<div id="hud">
+  <div id="scanline"></div>
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <div id="crosshair"></div>
+  <div id="topbar">
+    <div id="logo-area">
+      <img src="https://drive.google.com/uc?id=1NosHz-mLGpPckIeBhrQpgtwH5YU_Lu6s" alt="Lance" onerror="this.style.display='none'">
+      <span>Lance AR</span>
+    </div>
+    <div id="status-pill">SCANNING</div>
+  </div>
+  <div id="compass-wrap">
+    <div id="compass-ring"><div id="compass-needle"></div></div>
+    <div id="compass-label">COMPASS</div>
+    <div id="bearing-val">---°</div>
+  </div>
+  <div id="gps-info">LAT: <span id="gps-lat">--</span><br>LNG: <span id="gps-lng">--</span><br>DIST: <span id="gps-dist">--</span></div>
+  <div id="property-card">
+    <div class="distance-badge"><span class="pulse-dot"></span><span id="dist-label">Calculating distance...</span></div>
+    <div class="card-header">
+      <div>
+        <div class="card-address">2463 W Stonehaven Loop</div>
+        <div class="card-city">Lehi, UT 84043 — Utah County</div>
+      </div>
+      <div class="card-badge">Residential</div>
+    </div>
+    <div class="card-stats">
+      <div class="stat"><span class="stat-val">2,694</span><span class="stat-lbl">Sq Ft</span></div>
+      <div class="stat"><span class="stat-val">3 / 3</span><span class="stat-lbl">Bed / Bath</span></div>
+      <div class="stat"><span class="stat-val">2005</span><span class="stat-lbl">Built</span></div>
+    </div>
+    <div class="parcel-row">
+      <span class="parcel-label">Parcel</span>
+      <span class="parcel-id">65:016:0024</span>
+    </div>
+    <button class="btn-boundary" id="view-boundary-btn">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 3l7 7M3 3h6M3 3v6M21 21l-7-7M21 21h-6M21 21v-6"/></svg>
+      VIEW PARCEL BOUNDARY
+    </button>
+  </div>
+</div>
+<script>
+const PROPERTY={lat:40.44475,lng:-111.88929,mapsUrl:'https://www.google.com/maps/d/edit?mid=1HwSRz9GK6ZY61JKL7JwVE6Wc8mh2eV8&ll=40.44457998260678%2C-111.8892895&z=18'};
+function distanceFt(a,b,c,d){const R=20902231,dLat=(c-a)*Math.PI/180,dLon=(d-b)*Math.PI/180,e=Math.sin(dLat/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dLon/2)**2;return R*2*Math.atan2(Math.sqrt(e),Math.sqrt(1-e));}
+function formatDist(f){return f<528?Math.round(f)+' ft away':(f/5280).toFixed(2)+' mi away';}
+async function startCamera(){try{const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});document.getElementById('camera').srcObject=s;return true;}catch(e){document.getElementById('error-msg').textContent='Camera access denied. Open in Safari and allow camera.';document.getElementById('permission-screen').classList.add('hidden');document.getElementById('error-screen').classList.remove('hidden');return false;}}
+function startCompass(){const n=document.getElementById('compass-needle'),b=document.getElementById('bearing-val');const h=(e)=>{const v=e.webkitCompassHeading!=null?e.webkitCompassHeading:(360-(e.alpha||0));n.style.transform='rotate('+v+'deg)';b.textContent=Math.round(v)+'°';};if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){DeviceOrientationEvent.requestPermission().then(s=>{if(s==='granted'){window.addEventListener('deviceorientationabsolute',h,true);window.addEventListener('deviceorientation',h,true);}else document.getElementById('status-pill').textContent='NO COMPASS';}).catch(()=>document.getElementById('status-pill').textContent='NO COMPASS');}else{window.addEventListener('deviceorientationabsolute',h,true);window.addEventListener('deviceorientation',h,true);}}
+function startGPS(){if(!navigator.geolocation){document.getElementById('gps-dist').textContent='GPS N/A';return;}navigator.geolocation.watchPosition(p=>{const la=p.coords.latitude,ln=p.coords.longitude;document.getElementById('gps-lat').textContent=la.toFixed(5);document.getElementById('gps-lng').textContent=ln.toFixed(5);const f=distanceFt(la,ln,PROPERTY.lat,PROPERTY.lng),d=formatDist(f);document.getElementById('gps-dist').textContent=d;document.getElementById('dist-label').textContent=d;document.getElementById('status-pill').textContent='LIVE';document.getElementById('status-pill').style.color='#00FFB2';document.getElementById('status-pill').style.borderColor='#00FFB2';},()=>document.getElementById('gps-dist').textContent='GPS ERR',{enableHighAccuracy:true,maximumAge:3000});}
+document.getElementById('start-btn').addEventListener('click',async()=>{document.getElementById('permission-screen').classList.add('hidden');const ok=await startCamera();if(ok){startCompass();startGPS();}});
+document.getElementById('view-boundary-btn').addEventListener('click',()=>window.open(PROPERTY.mapsUrl,'_blank'));
+</script>
+</body>
+</html>
