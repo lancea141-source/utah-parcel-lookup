@@ -166,7 +166,7 @@ function updateUserLocation(pos) {
     userCircle.setLatLng([lat, lng]).setRadius(acc);
   }
 
-  if (following) map.panTo([lat, lng]);
+  if (following && !boundaryLoaded) map.panTo([lat, lng]);
 }
 
 function startGPS() {
@@ -178,7 +178,9 @@ function startGPS() {
   );
 }
 
-// Stop following when user pans manually
+// Don't follow GPS on initial load — stay on parcel
+// Only follow after user taps recenter
+let boundaryLoaded = false;
 map.on('dragstart', () => { following = false; });
 $('center-btn').onclick = () => {
   following = true;
@@ -295,6 +297,7 @@ async function fetchBoundary() {
     }).addTo(map);
 
     map.fitBounds(boundaryLayer.getBounds(), { padding: [50, 50] });
+    boundaryLoaded = true;
 
     // Update card
     const metaParts = [];
