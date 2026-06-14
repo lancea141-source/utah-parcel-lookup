@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Parcel Boundary</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #000; overflow: hidden; }
+
+  #map { position: fixed; inset: 0; }
+
+  /* Info card */
+  #card {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    background: rgba(47,62,70,0.92); color: #F4EDE4;
+    border-radius: 12px; padding: 10px 16px; min-width: 260px; max-width: 90vw;
+    backdrop-filter: blur(8px); z-index: 100;
+    border: 1px solid rgba(192,101,42,0.4);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  #card h2 { font-size: 13px; color: #C0652A; font-weight: 700; letter-spacing: .5px; margin-bottom: 4px; }
+  #card .meta { font-size: 11px; color: #C2A178; line-height: 1.6; }
+  #card .status { font-size: 11px; margin-top: 4px; color: #aaa; }
+
+  /* GPS accuracy badge */
+  #accuracy {
+    position: fixed; bottom: 80px; right: 12px;
+    background: rgba(0,0,0,0.6); color: #fff;
+    border-radius: 8px; padding: 6px 10px; font-size: 11px;
+    z-index: 100; display: none;
+  }
+
+  /* Compass button */
+  #compass-btn {
+    position: fixed; bottom: 20px; right: 12px;
+    width: 48px; height: 48px; border-radius: 50%;
+    background: rgba(47,62,70,0.92); border: 2px solid #C0652A;
+    color: #C0652A; font-size: 22px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+  }
+
+  /* Recenter button */
+  #center-btn {
+    position: fixed; bottom: 76px; right: 12px;
+    width: 44px; height: 44px; border-radius: 50%;
+    background: rgba(47,62,70,0.92); border: 2px solid #C2A178;
+    color: #C2A178; font-size: 20px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+  }
+
+  #loading {
+    position: fixed; inset: 0; background: #1a2326;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: #F4EDE4; z-index: 200;
+  }
+  #loading .logo { font-size: 32px; margin-bottom: 12px; }
+  #loading h3 { color: #C0652A; font-size: 16px; margin-bottom: 8px; }
+  #loading p { color: #C2A178; font-size: 13px; }
+  #loading .spinner {
+    width: 36px; height: 36px; border: 3px solid rgba(192,101,42,0.3);
+    border-top-color: #C0652A; border-radius: 50%;
+    animation: spin 0.8s linear infinite; margin-top: 20px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #error-msg {
+    position: fixed; bottom: 140px; left: 50%; transform: translateX(-50%);
+    background: rgba(180,30,30,0.9); color: #fff;
+    border-radius: 8px; padding: 8px 14px; font-size: 12px;
+    z-index: 100; display: none; max-width: 80vw; text-align: center;
+  }
+</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+
+<div id="loading">
+  <div class="logo">🏔️</div>
+  <h3>Lance the Realtor</h3>
+  <p id="load-status">Loading parcel data...</p>
+  <div class="spinner"></div>
+</div>
+
+<div id="map"></div>
+
+<div id="card">
+  <h2 id="card-parcel">Loading...</h2>
+  <div class="meta" id="card-meta"></div>
+  <div class="status" id="card-status">Locating boundary...</div>
+</div>
+
+<div id="accuracy">📍 ±<span id="acc-val">?</span>m</div>
+
+<button id="center-btn" title="Re-center on my location">📍</button>
+<button id="compass-btn" title="Compass">🧭</button>
+
+<div id="error-msg" id="error-msg"></div>
+
+<script>
+// ── Parse URL params ─────────────────────────────────────────
+const params  = new URLSearchParams(location.search);
+const parcel  = params.get('parcel')  || '';
+const county  = params.get('county')  || '';
+const initLat = parseFloat(params.get('lat')) || null;
+const initLng = parseFloat(params.get('lng')) || null;
+
+// ── UI helpers ───────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const setStatus = t => { $('card-status').textContent = t; $('load-status').textContent = t; };
+const showError = t => { const e = $('error-msg'); e.textContent = t; e.style.display='block'; setTimeout(()=>e.style.display='none', 5000); };
+
+// ── Init map ─────────────────────────────────────────────────
+const startLat = initLat || 39.5;
+const startLng = initLng || -111.5;
+
+const map = L.map('map', {
+  center: [startLat, startLng],
+  zoom: 15,
+  zoomControl: true,
+  attributionControl: false
+});
+
+// Satellite layer (Google via tile proxy)
+L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+  maxZoom: 21,
+  subdomains: ['mt0','mt1','mt2','mt3'],
+  attribution: '© Google'
+}).addTo(map);
+
+// ── User location (blue dot) ─────────────────────────────────
+let userMarker  = null;
+let userCircle  = null;
+let watchId     = null;
+let following   = true;
+
+function updateUserLocation(pos) {
+  const lat = pos.coords.latitude;
+  const lng = pos.coords.longitude;
+  const acc = Math.round(pos.coords.accuracy);
+
+  $('acc-val').textContent = acc;
+  $('accuracy').style.display = 'block';
+
+  if (!userMarker) {
+    // Blue dot
+    const blueDot = L.divIcon({
+      className: '',
+      html: `<div style="
+        width:18px;height:18px;border-radius:50%;
+        background:rgba(66,133,244,0.9);
+        border:3px solid white;
+        box-shadow:0 0 0 2px rgba(66,133,244,0.4), 0 2px 6px rgba(0,0,0,0.4);
+      "></div>`,
+      iconSize: [18, 18],
+      iconAnchor: [9, 9]
+    });
+    userMarker = L.marker([lat, lng], { icon: blueDot, zIndexOffset: 1000 }).addTo(map);
+    userCircle = L.circle([lat, lng], { radius: acc, color: 'rgba(66,133,244,0.3)', fillColor: 'rgba(66,133,244,0.1)', fillOpacity: 1, weight: 1 }).addTo(map);
+  } else {
+    userMarker.setLatLng([lat, lng]);
+    userCircle.setLatLng([lat, lng]).setRadius(acc);
+  }
+
+  if (following) map.panTo([lat, lng]);
+}
+
+function startGPS() {
+  if (!navigator.geolocation) { showError('GPS not available on this device'); return; }
+  watchId = navigator.geolocation.watchPosition(
+    updateUserLocation,
+    err => { showError('GPS error: ' + err.message); },
+    { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 }
+  );
+}
+
+// Stop following when user pans manually
+map.on('dragstart', () => { following = false; });
+$('center-btn').onclick = () => {
+  following = true;
+  if (userMarker) map.panTo(userMarker.getLatLng());
+};
+$('compass-btn').onclick = () => {
+  if (boundaryLayer) map.fitBounds(boundaryLayer.getBounds(), { padding: [40, 40] });
+};
+
+// ── Parcel marker (initial pin) ──────────────────────────────
+let boundaryLayer = null;
+
+if (initLat && initLng) {
+  const pinIcon = L.divIcon({
+    className: '',
+    html: `<div style="
+      width:16px;height:16px;border-radius:50%;
+      background:#C0652A;border:3px solid white;
+      box-shadow:0 2px 6px rgba(0,0,0,0.5);
+    "></div>`,
+    iconSize: [16,16], iconAnchor: [8,8]
+  });
+  L.marker([initLat, initLng], { icon: pinIcon }).addTo(map)
+    .bindPopup('<b>' + parcel + '</b><br>' + county + ' County');
+}
+
+// ── Update card ──────────────────────────────────────────────
+$('card-parcel').textContent = parcel || 'Unknown Parcel';
+$('card-meta').textContent   = county ? county + ' County' : '';
+
+// ── Fetch SGID boundary ──────────────────────────────────────
+const SGID_SERVICES = {
+  'Salt Lake': 'Parcels_SaltLake', 'Utah': 'Parcels_Utah',
+  'Juab': 'Parcels_Juab', 'Sanpete': 'Parcels_Sanpete',
+  'Davis': 'Parcels_Davis', 'Tooele': 'Parcels_Tooele',
+  'Summit': 'Parcels_Summit', 'Wasatch': 'Parcels_Wasatch',
+  'Duchesne': 'Parcels_Duchesne', 'Cache': 'Parcels_Cache',
+  'Weber': 'Parcels_Weber', 'Morgan': 'Parcels_Morgan',
+  'Carbon': 'Parcels_Carbon', 'Box Elder': 'Parcels_BoxElder',
+};
+
+async function fetchBoundary() {
+  if (!parcel || !county || !SGID_SERVICES[county]) {
+    setStatus('No parcel data — showing GPS pin only');
+    $('loading').style.display = 'none';
+    startGPS();
+    return;
+  }
+
+  const svcName = SGID_SERVICES[county];
+  const base    = 'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/' + svcName + '/FeatureServer/0/query';
+  const fields  = ['PARCEL_ID','ParcelID','SERIAL','PARCELID','APN','TAX_ID','TAXID','SERIAL_NUM'];
+  const variants = [parcel, parcel.replace(/-/g,''), parcel.toUpperCase()];
+
+  let geojson = null;
+
+  outerLoop:
+  for (const variant of variants) {
+    for (const field of fields) {
+      try {
+        setStatus('Searching ' + field + '=' + variant + '...');
+        const url  = base + '?where=' + encodeURIComponent(field + "='" + variant + "'") +
+                     '&outFields=*&outSR=4326&f=geojson';
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (data.features && data.features.length > 0) {
+          geojson = data;
+          break outerLoop;
+        }
+      } catch(e) {}
+    }
+  }
+
+  // Wildcard fallback
+  if (!geojson) {
+    const core = parcel.replace(/-/g,'').replace(/^0+/,'');
+    for (const field of fields) {
+      try {
+        setStatus('Wildcard search: ' + field + ' LIKE %' + core + '%');
+        const url  = base + '?where=' + encodeURIComponent(field + " LIKE '%" + core + "%'") +
+                     '&outFields=*&outSR=4326&f=geojson&resultRecordCount=1';
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (data.features && data.features.length > 0) {
+          geojson = data;
+          break;
+        }
+      } catch(e) {}
+    }
+  }
+
+  if (geojson) {
+    const feature = geojson.features[0];
+    const props   = feature.properties || {};
+    const acres   = props.ACRE || props.GIS_ACRES || props.ACREAGE || '';
+    const owner   = props.OWNER || props.OWN_NAME || props.OWNER_NAME || '';
+
+    // Draw boundary
+    boundaryLayer = L.geoJSON(geojson, {
+      style: {
+        color: '#C0652A',
+        weight: 3,
+        opacity: 0.95,
+        fillColor: '#C0652A',
+        fillOpacity: 0.08
+      }
+    }).addTo(map);
+
+    map.fitBounds(boundaryLayer.getBounds(), { padding: [50, 50] });
+
+    // Update card
+    const metaParts = [];
+    if (acres)  metaParts.push(parseFloat(acres).toFixed(2) + ' acres');
+    if (owner)  metaParts.push(owner);
+    if (county) metaParts.push(county + ' County');
+    $('card-meta').textContent = metaParts.join(' · ');
+    setStatus('Boundary loaded — walk the property 🏔️');
+  } else {
+    setStatus('Boundary not found — showing GPS pin');
+    showError('Could not load boundary for ' + parcel + '. GPS pin shown instead.');
+    if (initLat && initLng) map.setView([initLat, initLng], 16);
+  }
+
+  $('loading').style.display = 'none';
+  startGPS();
+}
+
+fetchBoundary();
+</script>
+</body>
+</html>
