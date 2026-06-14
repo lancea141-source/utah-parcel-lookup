@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Well Finder</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#000; overflow:hidden; }
+  #map { position:fixed; inset:0; }
+  #card {
+    position:fixed; top:12px; left:50%; transform:translateX(-50%);
+    background:rgba(47,62,70,0.93); color:#F4EDE4;
+    border-radius:12px; padding:10px 16px; min-width:270px; max-width:92vw;
+    backdrop-filter:blur(8px); z-index:100;
+    border:1px solid rgba(192,101,42,0.4);
+    box-shadow:0 4px 20px rgba(0,0,0,0.5);
+  }
+  #card h2 { font-size:13px; color:#C0652A; font-weight:700; margin-bottom:3px; }
+  #card .meta { font-size:11px; color:#C2A178; line-height:1.6; }
+  #card .status { font-size:11px; color:#aaa; margin-top:3px; }
+  .well-popup { font-family:-apple-system,sans-serif; font-size:12px; line-height:1.7; min-width:180px; }
+  .well-popup .well-title { font-weight:700; color:#2F3E46; font-size:13px; margin-bottom:4px; }
+  .well-popup .well-row { display:flex; justify-content:space-between; border-bottom:1px solid #eee; padding:2px 0; }
+  .well-popup .well-label { color:#666; }
+  .well-popup .well-val { font-weight:600; color:#2F3E46; }
+  .well-popup .well-link { display:block; margin-top:6px; color:#C0652A; font-weight:700; text-decoration:none; font-size:11px; }
+  #legend {
+    position:fixed; bottom:80px; left:12px;
+    background:rgba(47,62,70,0.92); border-radius:10px;
+    padding:10px 14px; z-index:100; font-size:11px; color:#F4EDE4;
+    backdrop-filter:blur(6px);
+  }
+  #legend .leg-row { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+  #legend .dot { width:12px; height:12px; border-radius:50%; flex-shrink:0; }
+  #center-btn, #boundary-btn {
+    position:fixed; right:12px;
+    width:44px; height:44px; border-radius:50%;
+    background:rgba(47,62,70,0.92); border:2px solid #C2A178;
+    color:#C2A178; font-size:20px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    z-index:100; box-shadow:0 2px 10px rgba(0,0,0,0.4);
+  }
+  #center-btn { bottom:20px; }
+  #boundary-btn { bottom:72px; border-color:#C0652A; color:#C0652A; font-size:16px; }
+  #well-count {
+    position:fixed; bottom:20px; left:12px;
+    background:rgba(47,62,70,0.92); color:#C2A178;
+    border-radius:8px; padding:6px 12px; font-size:12px; font-weight:700;
+    z-index:100; display:none;
+  }
+  #loading {
+    position:fixed; inset:0; background:#1a2326;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    color:#F4EDE4; z-index:200;
+  }
+  #loading .logo { font-size:32px; margin-bottom:12px; }
+  #loading h3 { color:#C0652A; font-size:16px; margin-bottom:8px; }
+  #loading p { color:#C2A178; font-size:13px; text-align:center; padding:0 20px; }
+  #loading .spinner {
+    width:36px; height:36px; border:3px solid rgba(192,101,42,0.3);
+    border-top-color:#C0652A; border-radius:50%;
+    animation:spin 0.8s linear infinite; margin-top:20px;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #error-bar {
+    position:fixed; bottom:130px; left:50%; transform:translateX(-50%);
+    background:rgba(180,30,30,0.9); color:#fff;
+    border-radius:8px; padding:7px 14px; font-size:12px;
+    z-index:100; display:none; max-width:85vw; text-align:center;
+  }
+</style>
+</head>
+<body>
+<div id="loading">
+  <div class="logo">💧</div>
+  <h3>Well Finder</h3>
+  <p id="load-msg">Loading parcel & searching for nearby wells...</p>
+  <div class="spinner"></div>
+</div>
+<div id="map"></div>
+<div id="card">
+  <h2 id="card-title">Well Finder</h2>
+  <div class="meta" id="card-meta"></div>
+  <div class="status" id="card-status">Searching...</div>
+</div>
+<div id="legend">
+  <div class="leg-row"><div class="dot" style="background:#1a6fc4;border:2px solid white;"></div> USGS Well</div>
+  <div class="leg-row"><div class="dot" style="background:#2196F3;border:2px solid white;"></div> State Well</div>
+  <div class="leg-row"><div class="dot" style="background:#C0652A;border:2px solid white;"></div> Parcel</div>
+  <div class="leg-row"><div class="dot" style="background:#4285F4;border:2px solid white;"></div> You</div>
+</div>
+<div id="well-count"></div>
+<button id="boundary-btn" title="Zoom to boundary">⬜</button>
+<button id="center-btn" title="My location">📍</button>
+<div id="error-bar"></div>
+<script>
+const params  = new URLSearchParams(location.search);
+const parcel  = params.get('parcel') || '';
+const county  = params.get('county') || '';
+const initLat = parseFloat(params.get('lat')) || 39.5;
+const initLng = parseFloat(params.get('lng')) || -111.5;
+const $ = id => document.getElementById(id);
+const setStatus = t => $('card-status').textContent = t;
+const setMsg    = t => $('load-msg').textContent = t;
+const showError = t => { $('error-bar').textContent = t; $('error-bar').style.display='block'; setTimeout(()=>$('error-bar').style.display='none',5000); };
+const map = L.map('map', { center:[initLat,initLng], zoom:13, zoomControl:true, attributionControl:false });
+L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+  maxZoom:21, subdomains:['mt0','mt1','mt2','mt3']
+}).addTo(map);
+const SGID_SERVICES = {
+  'Salt Lake':'Parcels_SaltLake','Utah':'Parcels_Utah','Juab':'Parcels_Juab',
+  'Sanpete':'Parcels_Sanpete','Davis':'Parcels_Davis','Tooele':'Parcels_Tooele',
+  'Summit':'Parcels_Summit','Wasatch':'Parcels_Wasatch','Duchesne':'Parcels_Duchesne',
+  'Cache':'Parcels_Cache','Weber':'Parcels_Weber','Morgan':'Parcels_Morgan',
+  'Carbon':'Parcels_Carbon','Box Elder':'Parcels_BoxElder',
+};
+const SGID_BASE = 'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/';
+function wellIcon(color, depth) {
+  const label = depth ? depth + "'" : '?';
+  return L.divIcon({
+    className:'',
+    html:`<div style="position:relative;width:28px;height:28px;background:${color};border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.5);cursor:pointer;"><span style="color:white;font-size:8px;font-weight:700;text-align:center;line-height:1;">${label}</span></div>`,
+    iconSize:[28,28], iconAnchor:[14,14]
+  });
+}
+const parcelIcon = L.divIcon({
+  className:'',
+  html:`<div style="width:16px;height:16px;border-radius:50%;background:#C0652A;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.5);"></div>`,
+  iconSize:[16,16], iconAnchor:[8,8]
+});
+L.marker([initLat,initLng],{icon:parcelIcon}).addTo(map).bindPopup(`<b>${parcel}</b><br>${county} County`);
+let userMarker = null;
+let following  = false;
+function updateGPS(pos) {
+  const lat = pos.coords.latitude, lng = pos.coords.longitude;
+  const blueDot = L.divIcon({
+    className:'',
+    html:`<div style="width:18px;height:18px;border-radius:50%;background:rgba(66,133,244,0.9);border:3px solid white;box-shadow:0 0 0 3px rgba(66,133,244,0.3),0 2px 6px rgba(0,0,0,0.4);"></div>`,
+    iconSize:[18,18], iconAnchor:[9,9]
+  });
+  if (!userMarker) userMarker = L.marker([lat,lng],{icon:blueDot,zIndexOffset:1000}).addTo(map);
+  else userMarker.setLatLng([lat,lng]);
+  if (following) map.panTo([lat,lng]);
+}
+map.on('dragstart', () => following = false);
+$('center-btn').onclick = () => { following = true; if (userMarker) map.panTo(userMarker.getLatLng()); };
+if (navigator.geolocation) {
+  navigator.geolocation.watchPosition(updateGPS, ()=>{}, { enableHighAccuracy:true, maximumAge:3000 });
+}
+$('card-title').textContent = parcel || 'Well Finder';
+$('card-meta').textContent  = county ? county + ' County' : '';
+const R    = 0.029;
+const bbox = [initLng-R, initLat-R, initLng+R, initLat+R];
+let boundaryLayer = null;
+async function fetchBoundary() {
+  if (!parcel || !county || !SGID_SERVICES[county]) return;
+  const svc      = SGID_BASE + SGID_SERVICES[county] + '/FeatureServer/0/query';
+  const variants = [parcel, parcel.toUpperCase(), parcel+'-', parcel.replace(/-/g,'')];
+  const fields   = ['PARCEL_ID','ParcelID','SERIAL','PARCELID','APN','TAX_ID'];
+  for (const v of variants) {
+    for (const f of fields) {
+      try {
+        const r = await fetch(svc+'?where='+encodeURIComponent(f+"='"+v+"'")+'&outFields=*&outSR=4326&f=geojson');
+        const d = await r.json();
+        if (d.features && d.features.length > 0) {
+          boundaryLayer = L.geoJSON(d, { style:{ color:'#C0652A', weight:2.5, opacity:0.9, fillColor:'#C0652A', fillOpacity:0.06 } }).addTo(map);
+          return;
+        }
+      } catch(e) {}
+    }
+  }
+}
+async function fetchUSGSWells() {
+  setMsg('Querying USGS groundwater database...');
+  const url = `https://waterservices.usgs.gov/nwis/site/?format=rdb&siteType=GW&bbox=${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}&siteStatus=all&hasDataTypeCd=gw`;
+  let count = 0;
+  try {
+    const r    = await fetch(url);
+    const text = await r.text();
+    const lines = text.split('\n').filter(l => !l.startsWith('#') && !l.startsWith('5s') && l.trim());
+    let headers = null;
+    for (const line of lines) {
+      const cols = line.split('\t');
+      if (!headers) { headers = cols; continue; }
+      if (cols.length < 5) continue;
+      const get = key => { const i = headers.indexOf(key); return i>=0 ? cols[i]||'' : ''; };
+      const lat  = parseFloat(get('dec_lat_va'));
+      const lng  = parseFloat(get('dec_long_va'));
+      const name = get('station_nm') || get('site_no');
+      const id   = get('site_no');
+      const depth= get('well_depth_va') ? Math.round(parseFloat(get('well_depth_va'))) : null;
+      const type = get('site_tp_cd');
+      if (!lat || !lng) continue;
+      const dist = Math.round(Math.sqrt(Math.pow((lat-initLat)*69,2)+Math.pow((lng-initLng)*53,2))*10)/10;
+      const popup = `<div class="well-popup"><div class="well-title">💧 ${name}</div><div class="well-row"><span class="well-label">Source</span><span class="well-val">USGS</span></div><div class="well-row"><span class="well-label">Site ID</span><span class="well-val">${id}</span></div>${depth?`<div class="well-row"><span class="well-label">Depth</span><span class="well-val">${depth} ft</span></div>`:''}<div class="well-row"><span class="well-label">Type</span><span class="well-val">${type||'Groundwater'}</span></div><div class="well-row"><span class="well-label">~Distance</span><span class="well-val">${dist} mi</span></div><a class="well-link" href="https://waterdata.usgs.gov/nwis/inventory?site_no=${id}" target="_blank">View USGS Record →</a></div>`;
+      L.marker([lat,lng], { icon: wellIcon('#1a6fc4', depth) }).addTo(map).bindPopup(popup);
+      count++;
+    }
+  } catch(e) { showError('USGS query failed: ' + e.message); }
+  return count;
+}
+async function fetchSGIDWells() {
+  setMsg('Querying Utah well database...');
+  const wellServices = ['Utah_Well_Sites/FeatureServer/0','WaterRights_Wells/FeatureServer/0','Utah_WaterRights/FeatureServer/0'];
+  const geometry = JSON.stringify({ xmin:bbox[0], ymin:bbox[1], xmax:bbox[2], ymax:bbox[3], spatialReference:{wkid:4326} });
+  let count = 0;
+  for (const svc of wellServices) {
+    try {
+      const url = SGID_BASE + svc + '/query?geometry=' + encodeURIComponent(geometry) + '&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&outFields=*&outSR=4326&f=geojson&resultRecordCount=100';
+      const r = await fetch(url);
+      const d = await r.json();
+      if (!d.features || d.features.length === 0) continue;
+      for (const feat of d.features) {
+        const p = feat.properties || {};
+        const geo = feat.geometry;
+        if (!geo || !geo.coordinates) continue;
+        const lng  = geo.coordinates[0];
+        const lat  = geo.coordinates[1];
+        const depth= p.DEPTH || p.WellDepth || p.WELL_DEPTH || null;
+        const name = p.OWNER || p.WellID || p.WELL_ID || p.NAME || 'Utah Well';
+        const id   = p.WellID || p.WELL_ID || p.OBJECTID || '';
+        const wtype= p.WaterType || p.WATER_TYPE || p.UseType || '';
+        const status=p.Status || p.STATUS || '';
+        const dist = Math.round(Math.sqrt(Math.pow((lat-initLat)*69,2)+Math.pow((lng-initLng)*53,2))*10)/10;
+        const popup = `<div class="well-popup"><div class="well-title">💧 ${name}</div><div class="well-row"><span class="well-label">Source</span><span class="well-val">Utah SGID</span></div>${id?`<div class="well-row"><span class="well-label">Well ID</span><span class="well-val">${id}</span></div>`:''} ${depth?`<div class="well-row"><span class="well-label">Depth</span><span class="well-val">${depth} ft</span></div>`:''} ${wtype?`<div class="well-row"><span class="well-label">Water Type</span><span class="well-val">${wtype}</span></div>`:''} ${status?`<div class="well-row"><span class="well-label">Status</span><span class="well-val">${status}</span></div>`:''}<div class="well-row"><span class="well-label">~Distance</span><span class="well-val">${dist} mi</span></div></div>`;
+        L.marker([lat,lng], { icon: wellIcon('#2196F3', depth ? Math.round(depth) : null) }).addTo(map).bindPopup(popup);
+        count++;
+      }
+      if (count > 0) break;
+    } catch(e) {}
+  }
+  return count;
+}
+async function init() {
+  setMsg('Loading parcel boundary...');
+  await fetchBoundary();
+  map.setView([initLat, initLng], 13);
+  const usgsCount = await fetchUSGSWells();
+  const sgidCount = await fetchSGIDWells();
+  const total = usgsCount + sgidCount;
+  $('loading').style.display = 'none';
+  if (total > 0) {
+    $('well-count').textContent = '💧 ' + total + ' well' + (total===1?'':'s') + ' found';
+    $('well-count').style.display = 'block';
+    setStatus(total + ' wells within ~2 miles — tap for details');
+  } else {
+    setStatus('No wells found within 2 miles');
+    showError('No well data found nearby.');
+  }
+  if (boundaryLayer) map.fitBounds(boundaryLayer.getBounds().pad(0.5));
+}
+$('boundary-btn').onclick = () => {
+  if (boundaryLayer) map.fitBounds(boundaryLayer.getBounds().pad(0.3));
+  else map.setView([initLat,initLng],14);
+};
+init();
+</script>
+</body>
+</html>
