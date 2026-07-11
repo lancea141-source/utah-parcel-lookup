@@ -21,7 +21,7 @@ const WHITE       = '#FFFFFF';
 const LINK_COLOR  = '#1155CC';
 const LOGO_URL    = 'https://drive.google.com/uc?export=view&id=1NosHz-mLGpPckIeBhrQpgtwH5YU_Lu6s';
 const MLS_BASE    = 'https://www.utahrealestate.com/';
-const MAPS_KEY    = 'AIzaSyA6AdGMaFCHM8csDODBr7sxTIhJv9J8KX4';
+const MAPS_KEY    = 'AIzaSyCES_NsIftJRwDTWOw5AgWR4pEF5ZpMkw0';
 const BOUNDARY_TOOL = 'https://lancea141-source.github.io/utah-parcel-lookup/boundary.html';
 
 // ── County SGID Services ────────────────────────────────────
