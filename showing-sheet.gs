@@ -1,5 +1,5 @@
 // ============================================================
-// Lance Anderson — Land Showing Sheet  v40
+// Lance Anderson — Land Showing Sheet  v41
 // ============================================================
 // Showings tab — unified land + residential, auto-detected
 // Data tab — multiple MLS paste blocks, each with own header
@@ -8,6 +8,8 @@
 // v40 — parcel-specific County Recorder links:
 //       Utah Co → property.asp deep link, Sanpete → SGID explorer,
 //       others → UGRC CoParcel_URL (self-updating) → static fallback
+// v41 — Maps API key stored in Script Properties (🔑 menu item),
+//       no key in code — safe to publish to GitHub
 // ============================================================
 
 // ── Brand ───────────────────────────────────────────────────
@@ -21,7 +23,7 @@ const WHITE       = '#FFFFFF';
 const LINK_COLOR  = '#1155CC';
 const LOGO_URL    = 'https://drive.google.com/uc?export=view&id=1NosHz-mLGpPckIeBhrQpgtwH5YU_Lu6s';
 const MLS_BASE    = 'https://www.utahrealestate.com/';
-const MAPS_KEY    = 'PASTE_YOUR_KEY_HERE';  // real key lives in Apps Script only
+const MAPS_KEY    = PropertiesService.getScriptProperties().getProperty('MAPS_KEY') || '';
 const BOUNDARY_TOOL = 'https://lancea141-source.github.io/utah-parcel-lookup/boundary.html';
 
 // ── County SGID Services ────────────────────────────────────
@@ -148,10 +150,26 @@ function onOpen() {
     .addItem('🚗 Rebuild Directions Link', 'buildDirectionsLink')
     .addSeparator()
     .addItem('⚙️ Setup Sheet (first time only)', 'setupSheet')
+    .addItem('🔑 Set Maps API Key', 'setMapsKey')
     .addItem('🐛 Diagnose SGID Field Names', 'diagnoseSGID')
     .addItem('🔬 Diagnose Parcel API', 'diagnoseParcelAPI')
     .addItem('🔍 Debug Land Detection', 'debugLandDetection')
     .addToUi();
+}
+
+// ============================================================
+// SET MAPS API KEY — stored in Script Properties, not code
+// ============================================================
+function setMapsKey() {
+  const ui = SpreadsheetApp.getUi();
+  const resp = ui.prompt('Maps API Key',
+    'Paste your Google Maps API key.\nStored privately in this sheet\u2019s script — never in the code.',
+    ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  const key = resp.getResponseText().trim();
+  if (!key) { ui.alert('No key entered — nothing saved.'); return; }
+  PropertiesService.getScriptProperties().setProperty('MAPS_KEY', key);
+  ui.alert('✅ Key saved.\n\nRun 📸 Reload Images to refresh satellite photos.');
 }
 
 // ============================================================
