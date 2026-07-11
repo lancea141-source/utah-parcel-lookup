@@ -22,6 +22,24 @@
   #card h2 { font-size: 13px; color: #C0652A; font-weight: 700; letter-spacing: .5px; margin-bottom: 4px; }
   #card .meta { font-size: 11px; color: #C2A178; line-height: 1.6; }
   #card .status { font-size: 11px; margin-top: 4px; color: #aaa; }
+  #card .county-btn {
+    display: inline-block; margin-top: 6px;
+    background: rgba(192,101,42,0.18); color: #C0652A;
+    border: 1px solid rgba(192,101,42,0.55); border-radius: 8px;
+    padding: 4px 10px; font-size: 11px; font-weight: 600;
+    text-decoration: none;
+  }
+  #card .county-btn:active { background: rgba(192,101,42,0.35); }
+
+  /* Parcel popup */
+  .parcel-popup { font-size: 12px; line-height: 1.55; color: #2F3E46; }
+  .parcel-popup b { color: #C0652A; }
+  .parcel-popup .row { margin: 1px 0; }
+  .parcel-popup a {
+    display: inline-block; margin-top: 6px;
+    color: #fff; background: #C0652A; border-radius: 6px;
+    padding: 4px 10px; font-weight: 600; text-decoration: none; font-size: 11px;
+  }
 
   /* GPS accuracy badge */
   #accuracy {
@@ -92,6 +110,7 @@
   <h2 id="card-parcel">Loading...</h2>
   <div class="meta" id="card-meta"></div>
   <div class="status" id="card-status">Locating boundary...</div>
+  <a id="county-link" class="county-btn" target="_blank" rel="noopener" style="display:none">🏛 Verify at County ↗</a>
 </div>
 
 <div id="accuracy">📍 ±<span id="acc-val">?</span>m</div>
@@ -99,7 +118,7 @@
 <button id="center-btn" title="Re-center on my location">📍</button>
 <button id="compass-btn" title="Compass">🧭</button>
 
-<div id="error-msg" id="error-msg"></div>
+<div id="error-msg"></div>
 
 <script>
 // ── Parse URL params ─────────────────────────────────────────
@@ -113,6 +132,7 @@ const initLng = parseFloat(params.get('lng')) || null;
 const $ = id => document.getElementById(id);
 const setStatus = t => { $('card-status').textContent = t; $('load-status').textContent = t; };
 const showError = t => { const e = $('error-msg'); e.textContent = t; e.style.display='block'; setTimeout(()=>e.style.display='none', 5000); };
+const esc = s => (s || '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // ── Init map ─────────────────────────────────────────────────
 const startLat = initLat || 39.5;
@@ -204,12 +224,104 @@ if (initLat && initLng) {
     iconSize: [16,16], iconAnchor: [8,8]
   });
   L.marker([initLat, initLng], { icon: pinIcon }).addTo(map)
-    .bindPopup('<b>' + parcel + '</b><br>' + county + ' County');
+    .bindPopup('<b>' + esc(parcel) + '</b><br>' + esc(county) + ' County');
 }
 
 // ── Update card ──────────────────────────────────────────────
 $('card-parcel').textContent = parcel || 'Unknown Parcel';
 $('card-meta').textContent   = county ? county + ' County' : '';
+
+// ── County verification links ────────────────────────────────
+// Static fallbacks (kept current as of Jul 2026)
+const RECORDERS = {
+  'Salt Lake': 'https://slco.org/recorder/',
+  'Utah':      'https://maps.utahcounty.gov/ParcelMap/ParcelMap.html',
+  'Juab':      'https://webapps.cloudsmartgis.com/ClientRelated/Utah/JuabCounty/JuabCounty/TaxParcelViewerLite/',
+  'Sanpete':   'https://opendata.gis.utah.gov/datasets/777e751aa4164b83bf1d76f811f8e5b3_0/explore',
+  'Davis':     'https://www.daviscountyutah.gov/recorder',
+  'Tooele':    'https://www.tooeleco.gov/recorder',
+  'Summit':    'https://www.summitcountyutah.gov/recorder',
+  'Wasatch':   'https://www.wasatchcounty.gov/recorder',
+  'Duchesne':  'https://www.duchesne.utah.gov/recorder',
+  'Cache':     'https://www.cachecounty.gov/recorder',
+  'Weber':     'https://www.webercountyutah.gov/recorder',
+  'Morgan':    'https://www.morgancountyutah.gov/recorder',
+  'Carbon':    'https://www.carbon.utah.gov/recorder',
+  'Box Elder': 'https://www.boxeldercounty.org/recorder',
+};
+
+// SGID Open Data explorer dataset IDs — parcel deep links for
+// counties with no viewer of their own
+const SGID_EXPLORER = {
+  'Sanpete': '777e751aa4164b83bf1d76f811f8e5b3_0',
+};
+
+const STATEWIDE_PARCELS =
+  'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/UtahStatewideParcels/FeatureServer/0/query';
+
+// Cascade: county deep link → SGID explorer → UGRC CoParcel_URL → static
+async function countyLink(parcelId, lat, lng) {
+  const id = (parcelId || '').trim();
+
+  // Utah County — Land Records property dashboard (values, taxes, docs)
+  if (county === 'Utah' && id) {
+    const serial = id.replace(/\D/g, '');
+    if (serial.length >= 7) {
+      return 'https://www.utahcounty.gov/landrecords/property.asp?av_serial=' + serial;
+    }
+  }
+
+  // SGID Open Data explorer — filter is base64({"PARCEL_ID":[...]})
+  if (SGID_EXPLORER[county] && id) {
+    const variants = [...new Set([id, id.replace(/-/g,''), id.replace(/^0+/,'')])];
+    let url = 'https://opendata.gis.utah.gov/datasets/' + SGID_EXPLORER[county] +
+              '/explore?filters=' + encodeURIComponent(btoa(JSON.stringify({ PARCEL_ID: variants })));
+    if (lat && lng) url += '&location=' + lat + '%2C' + lng + '%2C15';
+    return url;
+  }
+
+  // UGRC-maintained county website (self-updating, sometimes null)
+  if (id) {
+    try {
+      const variants = [...new Set([id, id.replace(/-/g,''), id.replace(/[:\s]/g,'')])];
+      const where = variants.map(v => "PARCEL_ID='" + v.replace(/'/g, "''") + "'").join(' OR ');
+      const r = await fetch(STATEWIDE_PARCELS + '?where=' + encodeURIComponent(where) +
+                            '&outFields=CoParcel_URL&returnGeometry=false&f=json');
+      const j = await r.json();
+      const u = j.features && j.features[0] && j.features[0].attributes.CoParcel_URL;
+      if (u) return u;
+    } catch(e) {}
+  }
+
+  return RECORDERS[county] || '';
+}
+
+let countyUrl = '';
+
+async function attachCountyLink(parcelId, lat, lng) {
+  countyUrl = await countyLink(parcelId, lat, lng);
+  if (!countyUrl) return;
+  const a = $('county-link');
+  a.href = countyUrl;
+  a.style.display = 'inline-block';
+  // If boundary popup already built, rebuild it with the link
+  if (boundaryLayer && boundaryLayer._popupHtml) {
+    boundaryLayer.setPopupContent(buildPopup(boundaryLayer._popupInfo));
+  }
+}
+
+// ── Parcel popup builder ─────────────────────────────────────
+function buildPopup(info) {
+  let html = '<div class="parcel-popup">';
+  html += '<div class="row"><b>Parcel ' + esc(info.id) + '</b></div>';
+  if (info.address) html += '<div class="row">📍 ' + esc(info.address) + '</div>';
+  if (info.owner)   html += '<div class="row">👤 ' + esc(info.owner) + '</div>';
+  if (info.acres)   html += '<div class="row">📐 ' + esc(info.acres) + ' acres</div>';
+  if (info.county)  html += '<div class="row">' + esc(info.county) + ' County</div>';
+  if (countyUrl)    html += '<a href="' + countyUrl.replace(/"/g,'&quot;') + '" target="_blank" rel="noopener">🏛 Verify at County ↗</a>';
+  html += '</div>';
+  return html;
+}
 
 // ── Fetch SGID boundary ──────────────────────────────────────
 const SGID_SERVICES = {
@@ -226,6 +338,7 @@ async function fetchBoundary() {
   if (!parcel || !county || !SGID_SERVICES[county]) {
     setStatus('No parcel data — showing GPS pin only');
     $('loading').style.display = 'none';
+    attachCountyLink(parcel, initLat, initLng);
     startGPS();
     return;
   }
@@ -282,8 +395,13 @@ async function fetchBoundary() {
   if (geojson) {
     const feature = geojson.features[0];
     const props   = feature.properties || {};
-    const acres   = props.ACRE || props.GIS_ACRES || props.ACREAGE || '';
-    const owner   = props.OWNER || props.OWN_NAME || props.OWNER_NAME || '';
+    const acres   = props.ACRE || props.GIS_ACRES || props.ACREAGE || props.TOTAL_ACRES || '';
+    const owner   = props.OWNER || props.OWN_NAME || props.OWNER_NAME || props.OWNER1 || '';
+    const addrRaw = props.PARCEL_ADD || props.ADDR || props.ADDRESS || props.SITE_ADDR || props.PROP_ADDR || '';
+    const addrCity= props.PARCEL_CITY || props.CITY || '';
+    const addrZip = props.PARCEL_ZIP || props.ZIP || '';
+    const address = [addrRaw, addrCity, addrZip].filter(Boolean).join(', ');
+    const matchedId = props.PARCEL_ID || props.ParcelID || props.SERIAL || props.APN || parcel;
 
     // Draw boundary
     boundaryLayer = L.geoJSON(geojson, {
@@ -299,17 +417,29 @@ async function fetchBoundary() {
     map.fitBounds(boundaryLayer.getBounds(), { padding: [50, 50] });
     boundaryLoaded = true;
 
+    // Tap the parcel for full details
+    const info = { id: matchedId, address: address, owner: owner, acres: acres ? parseFloat(acres).toFixed(2) : '', county: county };
+    boundaryLayer._popupInfo = info;
+    boundaryLayer._popupHtml = true;
+    boundaryLayer.bindPopup(buildPopup(info));
+
     // Update card
     const metaParts = [];
-    if (acres)  metaParts.push(parseFloat(acres).toFixed(2) + ' acres');
-    if (owner)  metaParts.push(owner);
-    if (county) metaParts.push(county + ' County');
+    if (address) metaParts.push(address);
+    if (acres)   metaParts.push(parseFloat(acres).toFixed(2) + ' acres');
+    if (owner)   metaParts.push(owner);
+    if (county)  metaParts.push(county + ' County');
     $('card-meta').textContent = metaParts.join(' · ');
-    setStatus('Boundary loaded — walk the property 🏔️');
+    setStatus('Boundary loaded — tap parcel for details 🏔️');
+
+    // Resolve county verification link with the canonical matched ID
+    const c = boundaryLayer.getBounds().getCenter();
+    attachCountyLink(matchedId, c.lat.toFixed(5), c.lng.toFixed(5));
   } else {
     setStatus('Boundary not found — showing GPS pin');
     showError('Could not load boundary for ' + parcel + '. GPS pin shown instead.');
     if (initLat && initLng) map.setView([initLat, initLng], 16);
+    attachCountyLink(parcel, initLat, initLng);
   }
 
   $('loading').style.display = 'none';
