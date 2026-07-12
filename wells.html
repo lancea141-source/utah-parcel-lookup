@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- wells.html v2 · 2026-07-11 · Utah DWR well logs (USGS retired) — drilling log links, 💧 pins, water right numbers -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -23,7 +24,6 @@
   #card .meta { font-size:11px; color:#C2A178; line-height:1.6; }
   #card .status { font-size:11px; color:#aaa; margin-top:3px; }
 
-  /* Well popup */
   .well-popup { font-family:-apple-system,sans-serif; font-size:12px; line-height:1.7; min-width:180px; }
   .well-popup .well-title { font-weight:700; color:#2F3E46; font-size:13px; margin-bottom:4px; }
   .well-popup .well-row { display:flex; justify-content:space-between; border-bottom:1px solid #eee; padding:2px 0; }
@@ -31,7 +31,6 @@
   .well-popup .well-val { font-weight:600; color:#2F3E46; }
   .well-popup .well-link { display:block; margin-top:6px; color:#C0652A; font-weight:700; text-decoration:none; font-size:11px; }
 
-  /* Legend */
   #legend {
     position:fixed; bottom:80px; left:12px;
     background:rgba(47,62,70,0.92); border-radius:10px;
@@ -40,8 +39,8 @@
   }
   #legend .leg-row { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
   #legend .dot { width:12px; height:12px; border-radius:50%; flex-shrink:0; }
+  #legend .ver { opacity:.5; font-size:10px; margin-top:2px; }
 
-  /* Buttons */
   #center-btn, #boundary-btn {
     position:fixed; right:12px;
     width:44px; height:44px; border-radius:50%;
@@ -89,7 +88,7 @@
 <div id="loading">
   <div class="logo">💧</div>
   <h3>Well Finder</h3>
-  <p id="load-msg">Loading parcel & searching for nearby wells...</p>
+  <p id="load-msg">Loading parcel & nearby well logs...</p>
   <div class="spinner"></div>
 </div>
 
@@ -98,14 +97,14 @@
 <div id="card">
   <h2 id="card-title">Well Finder</h2>
   <div class="meta" id="card-meta"></div>
-  <div class="status" id="card-status">Searching...</div>
+  <div class="status" id="card-status">Loading...</div>
 </div>
 
 <div id="legend">
-  <div class="leg-row"><div class="dot" style="background:#1a6fc4;border:2px solid white;"></div> USGS Well</div>
-  <div class="leg-row"><div class="dot" style="background:#2196F3;border:2px solid white;"></div> State Well</div>
+  <div class="leg-row"><div class="dot" style="background:#1a6fc4;border:2px solid white;"></div> Well log</div>
   <div class="leg-row"><div class="dot" style="background:#C0652A;border:2px solid white;"></div> Parcel</div>
   <div class="leg-row"><div class="dot" style="background:#4285F4;border:2px solid white;"></div> You</div>
+  <div class="ver">wells v2 · Utah DWR</div>
 </div>
 
 <div id="well-count"></div>
@@ -126,6 +125,7 @@ const $ = id => document.getElementById(id);
 const setStatus = t => $('card-status').textContent = t;
 const setMsg    = t => $('load-msg').textContent = t;
 const showError = t => { $('error-bar').textContent = t; $('error-bar').style.display='block'; setTimeout(()=>$('error-bar').style.display='none',5000); };
+const esc = s => (s || '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // ── Map ──────────────────────────────────────────────────────
 const map = L.map('map', { center:[initLat,initLng], zoom:13, zoomControl:true, attributionControl:false });
@@ -144,18 +144,18 @@ const SGID_SERVICES = {
 };
 const SGID_BASE = 'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/';
 
-// ── Well icon factory ────────────────────────────────────────
-function wellIcon(color, depth) {
-  const label = depth ? depth + "'" : '?';
+// ── Well icon ────────────────────────────────────────────────
+function wellIcon(depth) {
+  const label = depth > 0 ? depth + "'" : '💧';
   return L.divIcon({
     className:'',
     html:`<div style="
       position:relative;width:28px;height:28px;
-      background:${color};border:2px solid white;
+      background:#1a6fc4;border:2px solid white;
       border-radius:50%;display:flex;align-items:center;justify-content:center;
       box-shadow:0 2px 6px rgba(0,0,0,0.5);cursor:pointer;
     ">
-      <span style="color:white;font-size:8px;font-weight:700;text-align:center;line-height:1;">${label}</span>
+      <span style="color:white;font-size:${depth > 0 ? 8 : 11}px;font-weight:700;text-align:center;line-height:1;">${label}</span>
     </div>`,
     iconSize:[28,28], iconAnchor:[14,14]
   });
@@ -168,7 +168,7 @@ const parcelIcon = L.divIcon({
   iconSize:[16,16], iconAnchor:[8,8]
 });
 L.marker([initLat,initLng],{icon:parcelIcon}).addTo(map)
-  .bindPopup(`<b>${parcel}</b><br>${county} County`);
+  .bindPopup('<b>' + esc(parcel) + '</b><br>' + esc(county) + ' County');
 
 // ── User GPS ─────────────────────────────────────────────────
 let userMarker = null;
@@ -197,9 +197,6 @@ if (navigator.geolocation) {
 $('card-title').textContent = parcel || 'Well Finder';
 $('card-meta').textContent  = county ? county + ' County' : '';
 
-// ── Bounding box ~2 miles ────────────────────────────────────
-const R          = 0.029;
-const bbox       = [initLng-R, initLat-R, initLng+R, initLat+R];
 const wellsParam = params.get('wells') || '';
 
 // ── Parcel boundary ──────────────────────────────────────────
@@ -208,23 +205,22 @@ let boundaryLayer = null;
 async function fetchBoundary() {
   if (!parcel || !county || !SGID_SERVICES[county]) return;
   const svc      = SGID_BASE + SGID_SERVICES[county] + '/FeatureServer/0/query';
-  const variants = [parcel, parcel.toUpperCase(), parcel+'-', parcel.replace(/-/g,'')];
-  const fields   = ['PARCEL_ID','ParcelID','SERIAL','PARCELID','APN','TAX_ID'];
+  const variants = [parcel, parcel.replace(/-/g,''), parcel.toUpperCase(), parcel+'-'];
   for (const v of variants) {
-    for (const f of fields) {
-      try {
-        const r = await fetch(svc+'?where='+encodeURIComponent(f+"='"+v+"'")+'&outFields=*&outSR=4326&f=geojson');
-        const d = await r.json();
-        if (d.features && d.features.length > 0) {
-          boundaryLayer = L.geoJSON(d, { style:{ color:'#C0652A', weight:2.5, opacity:0.9, fillColor:'#C0652A', fillOpacity:0.06 } }).addTo(map);
-          return;
-        }
-      } catch(e) {}
-    }
+    try {
+      const r = await fetch(svc+'?where='+encodeURIComponent("PARCEL_ID='"+v+"'")+'&outFields=*&outSR=4326&f=geojson');
+      const d = await r.json();
+      if (d.features && d.features.length > 0) {
+        boundaryLayer = L.geoJSON(d, { style:{ color:'#C0652A', weight:2.5, opacity:0.9, fillColor:'#C0652A', fillOpacity:0.06 } }).addTo(map);
+        return;
+      }
+    } catch(e) {}
   }
 }
 
-// ── Plot wells from URL params (fetched server-side by Apps Script) ──
+// ── Plot wells from URL params ───────────────────────────────
+// Format: lat,lng,depth,waterRight[,WIN] entries joined by |
+// WIN (5th field) links straight to the DWR drilling log.
 function loadWellsFromParams() {
   if (!wellsParam) return 0;
   const entries = wellsParam.split('|');
@@ -234,18 +230,23 @@ function loadWellsFromParams() {
     if (parts.length < 4) continue;
     const lat   = parseFloat(parts[0]);
     const lng   = parseFloat(parts[1]);
-    const depth = parseInt(parts[2]) || null;
-    const id    = parts[3];
+    const depth = parseInt(parts[2]) || 0;
+    const wr    = parts[3] || '';
+    const win   = parts[4] || '';
     if (!lat || !lng) continue;
     const dist  = (Math.sqrt(Math.pow((lat-initLat)*69,2)+Math.pow((lng-initLng)*53,2))).toFixed(1);
-    const popup = `<div class="well-popup">
-      <div class="well-title">💧 USGS Groundwater Well</div>
-      <div class="well-row"><span class="well-label">Site ID</span><span class="well-val">${id}</span></div>
-      ${depth?`<div class="well-row"><span class="well-label">Depth</span><span class="well-val">${depth} ft</span></div>`:''}
-      <div class="well-row"><span class="well-label">~Distance</span><span class="well-val">${dist} mi</span></div>
-      <a class="well-link" href="https://waterdata.usgs.gov/nwis/inventory?site_no=${id}" target="_blank">View USGS Record →</a>
-    </div>`;
-    L.marker([lat,lng], { icon: wellIcon('#1a6fc4', depth) }).addTo(map).bindPopup(popup);
+    let popup = '<div class="well-popup">' +
+      '<div class="well-title">💧 Well log · Utah DWR</div>';
+    if (wr)        popup += '<div class="well-row"><span class="well-label">Water right</span><span class="well-val">' + esc(wr) + '</span></div>';
+    if (depth > 0) popup += '<div class="well-row"><span class="well-label">Depth</span><span class="well-val">' + depth + ' ft</span></div>';
+    popup += '<div class="well-row"><span class="well-label">~Distance</span><span class="well-val">' + dist + ' mi</span></div>';
+    if (win) {
+      popup += '<a class="well-link" href="https://waterrights.utah.gov/wellinfo/welldrilling/wlbrowse.asp?WIN=' + encodeURIComponent(win) + '" target="_blank" rel="noopener">View drilling log →</a>';
+    } else if (wr) {
+      popup += '<a class="well-link" href="https://waterrights.utah.gov/asp_apps/generalinfo/generalinfo.asp?RECORD_ID=' + encodeURIComponent(wr) + '" target="_blank" rel="noopener">Look up water right →</a>';
+    }
+    popup += '</div>';
+    L.marker([lat,lng], { icon: wellIcon(depth) }).addTo(map).bindPopup(popup);
     count++;
   }
   return count;
@@ -260,9 +261,9 @@ async function init() {
   const total = loadWellsFromParams();
   $('loading').style.display = 'none';
   if (total > 0) {
-    $('well-count').textContent = '💧 ' + total + ' well' + (total===1?'':'s') + ' nearby';
+    $('well-count').textContent = '💧 ' + total + ' well log' + (total===1?'':'s') + ' nearby';
     $('well-count').style.display = 'block';
-    setStatus(total + ' wells within ~2 miles — tap for details');
+    setStatus(total + ' well logs within ~2 miles — tap for details');
   } else {
     setStatus('No well data for this area');
   }
