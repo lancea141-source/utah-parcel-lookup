@@ -1,15 +1,14 @@
 // ============================================================
-// Lance Anderson — Land Showing Sheet  v41
+// Lance Anderson — Land Showing Sheet  v43
 // ============================================================
 // Showings tab — unified land + residential, auto-detected
 // Data tab — multiple MLS paste blocks, each with own header
-// Col K — land gets full links + boundary; residential MLS only
-// GPS — SGID → geocode → county centroid fallback chain
-// v40 — parcel-specific County Recorder links:
-//       Utah Co → property.asp deep link, Sanpete → SGID explorer,
-//       others → UGRC CoParcel_URL (self-updating) → static fallback
-// v41 — Maps API key stored in Script Properties (🔑 menu item),
-//       no key in code — safe to publish to GitHub
+// v41 — Maps API key via 🔑 menu (Script Properties), no key in code
+// v43 — Column I = single 🔗 Property Links button (links.html v2)
+//     — Wells: Utah DWR Well Logs w/ WIN drilling-log links (USGS dead)
+//     — SGID lookup slimmed: PARCEL_ID only (4 queries vs 64)
+//     — GPS caching: auto-adds 'GPS Coords (auto)' column, writes back
+//     — Fixed off-by-one row in GPS write-back
 // ============================================================
 
 // ── Brand ───────────────────────────────────────────────────
@@ -24,7 +23,9 @@ const LINK_COLOR  = '#1155CC';
 const LOGO_URL    = 'https://drive.google.com/uc?export=view&id=1NosHz-mLGpPckIeBhrQpgtwH5YU_Lu6s';
 const MLS_BASE    = 'https://www.utahrealestate.com/';
 const MAPS_KEY    = PropertiesService.getScriptProperties().getProperty('MAPS_KEY') || '';
-const BOUNDARY_TOOL = 'https://lancea141-source.github.io/utah-parcel-lookup/boundary.html';
+const TOOLS_BASE  = 'https://lancea141-source.github.io/utah-parcel-lookup/';
+const LINKS_PAGE  = TOOLS_BASE + 'links.html';
+const APP_VERSION = 'v43';
 
 // ── County SGID Services ────────────────────────────────────
 const SGID_BASE = 'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/';
@@ -82,8 +83,6 @@ const RECORDERS = {
 };
 
 // ── SGID Open Data explorer dataset IDs (parcel deep links) ──
-// Add more counties: opendata.gis.utah.gov → county parcels dataset
-// → copy the hash from the /datasets/<ID>/explore URL
 const SGID_EXPLORER = {
   'Sanpete': '777e751aa4164b83bf1d76f811f8e5b3_0',
 };
@@ -108,12 +107,9 @@ function coParcelUrl(taxId) {
 }
 
 // ── Build a parcel-specific recorder/viewer URL ──────────────
-// Cascade: county deep link → SGID explorer deep link →
-//          UGRC CoParcel_URL (self-updating) → static fallback
 function recorderUrl(county, taxId, lat, lng) {
   const id = (taxId || '').split('&')[0].trim();
 
-  // Utah County — Land Records property dashboard, serial = digits only
   if (county === 'Utah' && id) {
     const serial = id.replace(/\D/g, '');
     if (serial.length >= 7) {
@@ -121,7 +117,6 @@ function recorderUrl(county, taxId, lat, lng) {
     }
   }
 
-  // SGID Open Data explorer — filter is base64({"PARCEL_ID":[...]})
   if (SGID_EXPLORER[county] && id) {
     const variants = [...new Set([id, id.replace(/-/g, ''), id.replace(/^0+/, '')])];
     const filter = encodeURIComponent(
@@ -133,7 +128,6 @@ function recorderUrl(county, taxId, lat, lng) {
     return url;
   }
 
-  // UGRC-maintained county website — auto-updates when counties migrate
   return coParcelUrl(taxId) || RECORDERS[county] || '';
 }
 
@@ -142,7 +136,7 @@ function recorderUrl(county, taxId, lat, lng) {
 // ============================================================
 function onOpen() {
   SpreadsheetApp.getUi()
-    .createMenu('🌄 Showing Sheet')
+    .createMenu('🌄 Showing Sheet ' + APP_VERSION)
     .addItem('▶ Sync & Build (Full Run)', 'syncAndBuild')
     .addSeparator()
     .addItem('↺ Sync Data Only', 'syncAllData')
@@ -152,7 +146,6 @@ function onOpen() {
     .addItem('⚙️ Setup Sheet (first time only)', 'setupSheet')
     .addItem('🔑 Set Maps API Key', 'setMapsKey')
     .addItem('🐛 Diagnose SGID Field Names', 'diagnoseSGID')
-    .addItem('🔬 Diagnose Parcel API', 'diagnoseParcelAPI')
     .addItem('🔍 Debug Land Detection', 'debugLandDetection')
     .addToUi();
 }
@@ -192,12 +185,12 @@ function setupSheet() {
   buildSheetStructure(showSheet);
 
   SpreadsheetApp.getUi().alert(
-    '✅ Sheet is ready!\n\n' +
+    '✅ Sheet is ready! (' + APP_VERSION + ')\n\n' +
     'HOW TO USE THE MLS DATA TAB:\n' +
     '• Paste any MLS report (with its header row) starting at row 1\n' +
     '• Paste another report below it — header row + data\n' +
-    '• Mix land and residential — the script auto-detects each\n' +
-    '• Column order does not matter — headers matched by name\n\n' +
+    '• EVERY report needs its own header row — even if similar\n' +
+    '• Mix land and residential — the script auto-detects each\n\n' +
     'Then run: 🌄 Showing Sheet > ▶ Sync & Build'
   );
 }
@@ -205,7 +198,7 @@ function setupSheet() {
 function setupDataTab(sheet) {
   sheet.clear();
   sheet.getRange(1, 1, 1, 10).merge()
-    .setValue('📋 MLS DATA — Paste your MLS reports here (row 1+). Each report should include its own header row. Mix land and residential freely.')
+    .setValue('📋 MLS DATA — Paste your MLS reports here (row 1+). EVERY report must include its own header row. Mix land and residential freely.')
     .setBackground(NAVY).setFontColor(WHITE).setFontWeight('bold').setFontSize(10)
     .setHorizontalAlignment('left').setVerticalAlignment('middle');
   sheet.setRowHeight(1, 36);
@@ -217,25 +210,19 @@ function setupDataTab(sheet) {
 // ============================================================
 function buildSheetStructure(showSheet) {
 
-  // ── Column widths ──────────────────────────────────────────
-  var colWidths = [120,80,200,120,75,90,170,160,160,130,100,110];
+  var colWidths = [120,80,200,120,75,90,170,200,120,90,100,110];
   for (var c = 0; c < colWidths.length; c++) {
     showSheet.setColumnWidth(c + 1, colWidths[c]);
   }
 
-  // ── Row 1: navy header bar ─────────────────────────────────
   showSheet.setRowHeight(1, 90);
   showSheet.getRange(1, 1, 1, 12).setBackground(NAVY).setFontColor(WHITE);
 
-  // A1 — Logo
   showSheet.getRange(1, 1)
     .setFormula('=IMAGE("' + LOGO_URL + '",4,80,110)')
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle');
 
-  // B1 — empty navy (already set above)
-
-  // C1 — Directions placeholder
   showSheet.getRange(1, 3)
     .setValue('Run Sync & Build to generate directions link')
     .setFontColor(TERRACOTTA)
@@ -244,9 +231,6 @@ function buildSheetStructure(showSheet) {
     .setHorizontalAlignment('left')
     .setVerticalAlignment('middle');
 
-  // D1–H1 — empty navy (already set above)
-
-  // I1-J1 — merged customer info placeholder
   showSheet.getRange(1, 9, 1, 2).merge()
     .setValue('Customer Name' + '\n' + 'Customer Email' + '\n' + 'Customer Phone #')
     .setBackground(NAVY)
@@ -257,12 +241,10 @@ function buildSheetStructure(showSheet) {
     .setVerticalAlignment('middle')
     .setWrap(true);
 
-  // K1–L1 — navy, no text
   showSheet.getRange(1, 11, 1, 2)
     .setValue('')
     .setBackground(NAVY);
 
-  // ── Row 2: terracotta header bar ───────────────────────────
   showSheet.setRowHeight(2, 32);
   showSheet.getRange(2, 1, 1, 12)
     .setBackground(TERRACOTTA)
@@ -271,9 +253,8 @@ function buildSheetStructure(showSheet) {
     .setFontSize(11)
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle')
-    .setValues([['Photo','Time','Address','Price','MLS#','Status','Details','Notes','Location','Lookup','Agent','Phone']]);
+    .setValues([['Photo','Time','Address','Price','MLS#','Status','Details','Notes','Links','','Agent','Phone']]);
 
-  // J2 — Toggle checkbox only, no label
   showSheet.getRange(2, 10)
     .clearContent()
     .insertCheckboxes()
@@ -283,14 +264,12 @@ function buildSheetStructure(showSheet) {
     .setVerticalAlignment('middle')
     .setNote('Checked = Agent & Phone visible\nUnchecked = hidden from customers');
 
-  // K2–L2 — terracotta to match row
   showSheet.getRange(2, 11, 1, 2)
     .setBackground(TERRACOTTA)
     .setFontColor(CREAM);
 
   showSheet.setFrozenRows(2);
 
-  // Hide K & L by default
   showSheet.hideColumns(11);
   showSheet.hideColumns(12);
 }
@@ -348,18 +327,11 @@ function isLandRow(row, idx) {
   const water    = safe(idx.water);
   const utilities= safe(idx.utilities);
 
-  // Explicit land indicators
   if (propType.match(/land|lot|acreage|farm|ranch/)) return true;
   if (zoning.match(/agricult|rural|range|farm|forest|open space/)) return true;
   if (acres >= 5) return true;
-
-  // Land export signature: has Tax ID + water/utilities fields + no sqft column
   if (taxId && idx.sqft === -1) return true;
-
-  // Land export signature: has Tax ID + water/utilities fields + sqft cell is empty
   if (taxId && water && sqft === 0) return true;
-
-  // Large acreage even with residential zoning (rural Utah land listings)
   if (acres >= 1 && sqft === 0 && taxId) return true;
 
   return false;
@@ -378,40 +350,35 @@ function parseDataBlocks(dataSheet) {
   let currentHeaders = null;
   let currentIdx     = null;
   let currentRows    = [];
-  let currentStart   = 0;
+  let currentHeadRow = 0;
 
   for (let r = 0; r < allValues.length; r++) {
     const row = allValues[r];
     const rowStr = row.map(c => c.toString().trim());
 
-    // Detect header row — must contain MLS# or MLS Number
     const mlsCol = rowStr.findIndex(c => c === 'MLS#' || c === 'MLS Number' || c === 'MLS');
     if (mlsCol !== -1) {
-      // Save previous block regardless of row count
       if (currentHeaders) {
-        blocks.push({ headers: currentHeaders, idx: currentIdx, rows: currentRows, startRow: currentStart });
-        Logger.log('Block saved: ' + currentRows.length + ' rows, first header: ' + currentHeaders.slice(0,3).join(','));
+        blocks.push({ headers: currentHeaders, idx: currentIdx, rows: currentRows, headerSheetRow: currentHeadRow });
+        Logger.log('Block saved: ' + currentRows.length + ' rows');
       }
       currentHeaders = rowStr;
       currentIdx     = makeIdx(rowStr);
       currentRows    = [];
-      currentStart   = r + 1;
-      Logger.log('New header block at data-row ' + r + ': MLS# at col ' + mlsCol);
+      currentHeadRow = r + 1;
+      Logger.log('New header block at sheet row ' + (r + 1) + ': MLS# at col ' + mlsCol);
       continue;
     }
 
-    // Skip completely empty rows
     if (rowStr.every(c => c === '')) continue;
 
-    // Add to current block
     if (currentHeaders) {
-      currentRows.push({ data: row, sheetRow: r + 2 });
+      currentRows.push({ data: row, sheetRow: r + 1 });
     }
   }
 
-  // Save last block
   if (currentHeaders && currentRows.length > 0) {
-    blocks.push({ headers: currentHeaders, idx: currentIdx, rows: currentRows, startRow: currentStart });
+    blocks.push({ headers: currentHeaders, idx: currentIdx, rows: currentRows, headerSheetRow: currentHeadRow });
   }
 
   return blocks;
@@ -424,7 +391,7 @@ function syncAndBuild() {
   syncAllData();
   fetchAllImages();
   buildDirectionsLink();
-  SpreadsheetApp.getUi().alert('✅ Done! Data synced, images loaded, directions built.');
+  SpreadsheetApp.getUi().alert('✅ Done! (' + APP_VERSION + ')\nData synced, images loaded, directions built.');
 }
 
 // ============================================================
@@ -439,11 +406,12 @@ function syncAllData() {
     return;
   }
 
-  // Clear showings data rows
   const lastRow = showSheet.getLastRow();
   if (lastRow >= 3) {
     showSheet.getRange(3, 1, lastRow - 2, 12).clearContent().clearFormat();
   }
+
+  showSheet.getRange(2, 9).setValue('Links');
 
   const blocks = parseDataBlocks(dataSheet);
   if (blocks.length === 0) {
@@ -454,14 +422,14 @@ function syncAllData() {
   let sheetRow = 3;
 
   for (const block of blocks) {
-    const { headers, idx, rows } = block;
+    const { headers, rows, headerSheetRow } = block;
+    const idx = block.idx;
 
-    // Check if GPS column exists, add if missing
     if (idx.gpsCoords === -1) {
-      const newCol = headers.length + 1;
-      // Find the actual header row in the sheet for this block
-      // We'll just log — writing back is complex with multi-block
-      Logger.log('No GPS Coords column in block with headers: ' + headers.slice(0,5).join(', '));
+      const gpsCol = headers.length + 1;
+      dataSheet.getRange(headerSheetRow, gpsCol).setValue('GPS Coords (auto)');
+      idx.gpsCoords = gpsCol - 1;
+      Logger.log('Added GPS Coords (auto) column at col ' + gpsCol + ' for block at row ' + headerSheetRow);
     }
 
     for (const { data: row, sheetRow: dataSheetRow } of rows) {
@@ -496,38 +464,34 @@ function syncAllData() {
         const utilities = safe(idx.utilities);
         const waterShare= safeNum(idx.waterShare);
         let   gpsCoords = safe(idx.gpsCoords);
+        let   gpsFresh  = false;
 
-        if (gpsCoords) Logger.log('Manual GPS for MLS ' + mls + ': ' + gpsCoords);
-
-        // ── GPS resolution chain ──
         if (!gpsCoords && taxId && county && isLand) {
           const primaryId = taxId.split('&')[0].trim();
           const sgid = fetchParcelFromSGID(primaryId, county);
           if (sgid && sgid.coords) {
             gpsCoords = sgid.coords;
+            gpsFresh  = true;
             Logger.log('SGID GPS for ' + primaryId + ': ' + gpsCoords);
-            // Write back to data sheet
-            if (idx.gpsCoords !== -1) {
-              dataSheet.getRange(dataSheetRow, idx.gpsCoords + 1).setValue(gpsCoords);
-            }
           } else {
             Logger.log('SGID miss: ' + primaryId + ' | ' + county);
           }
         }
 
-        // Geocode fallback — no address AND no GPS
         if (!gpsCoords && !address && (city || county)) {
           const geocoded = geocodeLocation(city, county);
           if (geocoded) {
             gpsCoords = geocoded;
-            Logger.log('Geocoded: ' + city + ', ' + county + ' → ' + gpsCoords);
+            gpsFresh  = true;
           } else if (county && COUNTY_CENTROIDS[county]) {
             gpsCoords = COUNTY_CENTROIDS[county];
-            Logger.log('County centroid fallback: ' + county + ' → ' + gpsCoords);
           }
         }
 
-        // ── Price display ──
+        if (gpsFresh && gpsCoords && idx.gpsCoords !== -1) {
+          dataSheet.getRange(dataSheetRow, idx.gpsCoords + 1).setValue(gpsCoords);
+        }
+
         const priceUnit  = safe(idx.priceUnit).toLowerCase();
         const acresNum   = parseFloat(acres) || 0;
         const isPricePerAcre = isLand && priceUnit === 'acre' && acresNum > 0;
@@ -540,25 +504,23 @@ function syncAllData() {
           ? '\n▼ ' + (((origPrice - price) / origPrice) * 100).toFixed(1) + '%' : '';
         const priceDisplay   = priceFormatted + pricePerAcreStr + priceDrop;
 
-        // ── HOA ──
         let hoaDisplay = '';
         if (hoa.toLowerCase() === 'yes') hoaDisplay = hoaFee ? 'HOA: $' + hoaFee + '/yr' : 'HOA: Yes';
         else if (hoa.toLowerCase() === 'no') hoaDisplay = 'HOA: No';
 
-        // ── Phone ──
         const phone        = phone1 || phone2;
         const phoneRaw     = phone.replace(/\D/g, '');
         const phoneDisplay = phoneRaw.length === 10
           ? '(' + phoneRaw.slice(0,3) + ') ' + phoneRaw.slice(3,6) + '-' + phoneRaw.slice(6) : phone;
 
-        // ── Map URL — GPS pin preferred ──
         const gpsClean   = gpsCoords ? gpsCoords.replace(/\s/g,'') : '';
+        const lat        = gpsClean ? gpsClean.split(',')[0] : '';
+        const lng        = gpsClean ? gpsClean.split(',')[1] : '';
         const fullAddress = [address, city, 'UT'].filter(Boolean).join(', ');
         const mapUrl     = gpsClean
           ? 'https://www.google.com/maps/search/?api=1&query=' + gpsClean
           : 'https://maps.google.com/?q=' + encodeURIComponent(fullAddress);
 
-        // ── Details cell ──
         let detailLines = [];
         if (isLand) {
           if (acres)      detailLines.push('ACRES: ' + acres);
@@ -584,30 +546,28 @@ function syncAllData() {
           ? (sheetRow % 2 === 0 ? ALT_ROW  : CREAM)
           : (sheetRow % 2 === 0 ? RES_ALT  : RES_BASE);
 
-        // ── A: Photo ──
         const photoCell = showSheet.getRange(sheetRow, 1);
         const mlsImgUrl = getMlsImage(mls);
+        let imgUrl = '';
         if (mlsImgUrl) {
+          imgUrl = mlsImgUrl;
           photoCell.setFormula('=IMAGE("' + mlsImgUrl + '",4,100,110)');
         } else if (gpsClean && gpsClean.includes(',')) {
-          const parts  = gpsClean.split(',');
-          const satUrl = 'https://maps.googleapis.com/maps/api/staticmap?center=' + parts[0] + ',' + parts[1] +
-            '&zoom=15&size=400x200&maptype=satellite&markers=color:red%7C' + parts[0] + ',' + parts[1] +
+          imgUrl = 'https://maps.googleapis.com/maps/api/staticmap?center=' + lat + ',' + lng +
+            '&zoom=15&size=400x200&maptype=satellite&markers=color:red%7C' + lat + ',' + lng +
             '&key=' + MAPS_KEY;
-          photoCell.setFormula('=IMAGE("' + satUrl + '",4,100,110)');
+          photoCell.setFormula('=IMAGE("' + imgUrl + '",4,100,110)');
         } else {
           photoCell.setValue('No image').setFontColor('#aaaaaa').setFontStyle('italic');
         }
         photoCell.setBackground(bg).setHorizontalAlignment('center').setVerticalAlignment('middle');
         showSheet.setRowHeight(sheetRow, 110);
 
-        // ── B: Time ──
         showSheet.getRange(sheetRow, 2).setValue('')
           .setBackground(bg).setHorizontalAlignment('center').setVerticalAlignment('middle')
           .setFontColor(TERRACOTTA).setFontWeight('bold').setFontSize(12)
           .setWrap(true);
 
-        // ── C: Address ──
         const addrLine1   = address || (isLand && acres ? acres + ' acres' : '') || city || 'Unknown';
         const addrLine2   = city ? city + ', UT' : 'UT';
         const pinLabel    = gpsClean ? ' 📍' : '';
@@ -617,19 +577,16 @@ function syncAllData() {
           .setBackground(bg).setFontSize(11).setVerticalAlignment('middle')
           .setFontColor(LINK_COLOR).setWrap(true);
 
-        // ── D: Price ──
         showSheet.getRange(sheetRow, 4).setValue(priceDisplay)
           .setBackground(bg).setFontWeight('bold').setFontSize(11)
           .setFontColor(NAVY).setVerticalAlignment('middle').setWrap(true);
 
-        // ── E: MLS# ──
         showSheet.getRange(sheetRow, 5)
           .setFormula('=HYPERLINK("' + MLS_BASE + mls + '","' + mls + '")')
           .setBackground(bg).setFontSize(11)
           .setHorizontalAlignment('center').setVerticalAlignment('middle')
           .setFontColor(LINK_COLOR);
 
-        // ── F: Status + DOM ──
         const statusCell = showSheet.getRange(sheetRow, 6);
         statusCell.setValue(status + (dom ? '\nDOM: ' + dom : ''))
           .setBackground(bg).setHorizontalAlignment('left').setVerticalAlignment('middle')
@@ -641,32 +598,29 @@ function syncAllData() {
         else if (sl.includes('sold'))      statusCell.setFontColor('#dc2626');
         else                               statusCell.setFontColor(NAVY);
 
-        // ── G: Details ──
         showSheet.getRange(sheetRow, 7).setValue(detailLines.join('\n'))
           .setBackground(bg).setHorizontalAlignment('left').setVerticalAlignment('top')
           .setFontSize(9).setFontColor(NAVY).setVerticalAlignment('middle').setWrap(true);
 
-        // ── H: Notes ──
         showSheet.getRange(sheetRow, 8).setValue('')
           .setBackground(bg).setVerticalAlignment('top').setHorizontalAlignment('left')
           .setFontColor(TERRACOTTA).setFontSize(10).setWrap(true);
 
-        // ── K: Agent (hidden) ──
+        const wells = (isLand && lat && lng && taxId)
+          ? fetchUSGSWells(parseFloat(lat), parseFloat(lng)) : [];
+        buildLinksButton(showSheet, sheetRow, 9, bg, {
+          isLand: isLand, addr: address, city: city, county: county,
+          taxId: taxId, mls: mls, acres: acres, lat: lat, lng: lng,
+          imgUrl: imgUrl, wells: wells
+        });
+
         showSheet.getRange(sheetRow, 11).setValue(agent)
           .setBackground(bg).setVerticalAlignment('middle').setHorizontalAlignment('left')
           .setFontColor(TERRACOTTA).setFontWeight('bold').setFontSize(10).setWrap(true);
 
-        // ── L: Phone (hidden) ──
         showSheet.getRange(sheetRow, 12).setValue(phone ? '📞 ' + phoneDisplay : '')
           .setBackground(bg).setVerticalAlignment('middle').setHorizontalAlignment('left')
           .setFontColor(TERRACOTTA).setFontWeight('bold').setFontSize(10).setWrap(true);
-
-        // ── K: Links ──
-        if (isLand) {
-          buildLandLinksCell(showSheet, sheetRow, 9, bg, gpsCoords, taxId, county, mls);
-        } else {
-          buildResLinksCell(showSheet, sheetRow, 9, bg, mls, gpsCoords);
-        }
 
         showSheet.getRange(sheetRow, 1, 1, 12)
           .setBorder(false, false, true, false, false, false, '#CCCCCC', SpreadsheetApp.BorderStyle.SOLID);
@@ -682,99 +636,37 @@ function syncAllData() {
   applyColumnFormats(showSheet, sheetRow - 1);
 }
 
-
-// ── Convert lat/lng to Web Mercator for parcels.utah.gov deep link ──
-function toWebMercator(lat, lng) {
-  var x = lng * 20037508.34 / 180;
-  var y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
-  y = y * 20037508.34 / 180;
-  return { x: x, y: y };
-}
-
 // ============================================================
-// BUILD LINKS — LAND
-// Col K = Location (Maps + Boundary)
-// Col L = Lookup (State Parcel + Recorder)
+// 🔗 PROPERTY LINKS BUTTON — one tap-friendly page per property
 // ============================================================
-function buildLandLinksCell(sheet, row, col, bg, gpsCoords, taxId, county, mls) {
-  const gpsClean     = gpsCoords ? gpsCoords.replace(/\s/g,'') : '';
-  const primaryTaxId = taxId ? taxId.split('&')[0].trim() : '';
-  const lat          = gpsClean ? gpsClean.split(',')[0] : '';
-  const lng          = gpsClean ? gpsClean.split(',')[1] : '';
+function buildLinksButton(sheet, row, col, bg, o) {
+  const p = [];
+  const add = (k, v) => { if (v) p.push(k + '=' + encodeURIComponent(v)); };
 
-  // Col K — Location
-  const locLinks = [];
-  if (gpsClean) {
-    locLinks.push({ label: '🗺 Google Maps',     url: 'https://www.google.com/maps/search/?api=1&query=' + gpsClean });
-    locLinks.push({ label: '🍎 Apple Maps',      url: 'https://maps.apple.com/?ll=' + gpsClean + '&q=Parcel' });
-  }
-  if (gpsClean && primaryTaxId && county) {
-    locLinks.push({ label: '📐 Parcel Boundary', url: BOUNDARY_TOOL + '?parcel=' + encodeURIComponent(primaryTaxId) + '&county=' + encodeURIComponent(county) + '&lat=' + lat + '&lng=' + lng });
-  }
-  writeLinksCell(sheet, row, col, bg, locLinks);
+  add('addr', o.addr);
+  add('city', o.city);
+  add('mls',  o.mls);
+  add('lat',  o.lat);
+  add('lng',  o.lng);
 
-  // Col L — Lookup
-  const lookLinks = [];
-  if (lat && lng) {
-    var satUrl = 'https://www.google.com/maps/@' + lat + ',' + lng + ',18z/data=!3m1!1e3';
-    lookLinks.push({ label: '🛰 Satellite View', url: satUrl });
+  if (o.isLand) {
+    const primaryId = o.taxId ? o.taxId.split('&')[0].trim() : '';
+    add('county', o.county);
+    add('parcel', primaryId);
+    add('acres',  o.acres);
+    add('rec',    recorderUrl(o.county, o.taxId, o.lat, o.lng));
+    if (o.wells && o.wells.length) add('wl', o.wells.join('|'));
   }
-  const recUrl = recorderUrl(county, taxId, lat, lng);
-  if (recUrl) lookLinks.push({ label: '📋 County Recorder', url: recUrl });
 
-  // Wells map — fetch wells server-side, embed in URL
-  if (lat && lng && primaryTaxId) {
-    var wells    = fetchUSGSWells(parseFloat(lat), parseFloat(lng));
-    var wellsUrl = 'https://lancea141-source.github.io/utah-parcel-lookup/wells.html' +
-      '?parcel=' + encodeURIComponent(primaryTaxId) +
-      '&county=' + encodeURIComponent(county) +
-      '&lat=' + lat + '&lng=' + lng;
-    if (wells.length > 0) {
-      wellsUrl += '&wells=' + encodeURIComponent(wells.join('|'));
-    }
-    lookLinks.push({ label: '💧 Nearby Wells (' + wells.length + ')', url: wellsUrl });
-  }
-  writeLinksCell(sheet, row, col + 1, bg, lookLinks);
-}
+  add('img', o.imgUrl);
 
-// ============================================================
-// BUILD LINKS — RESIDENTIAL
-// Col K = Location (Maps only)
-// Col L = empty
-// ============================================================
-function buildResLinksCell(sheet, row, col, bg, mls, gpsCoords) {
-  const gpsClean = gpsCoords ? gpsCoords.replace(/\s/g,'') : '';
-  const locLinks = [];
-  if (gpsClean) {
-    locLinks.push({ label: '🗺 Google Maps', url: 'https://www.google.com/maps/search/?api=1&query=' + gpsClean });
-    locLinks.push({ label: '🍎 Apple Maps',  url: 'https://maps.apple.com/?ll=' + gpsClean + '&q=Parcel' });
-  }
-  writeLinksCell(sheet, row, col, bg, locLinks);
-  // Col J (col+1) — empty for residential
-  sheet.getRange(row, col + 1).setValue('').setBackground(bg);
-}
-
-// ── Write rich text links to a cell ─────────────────────────
-function writeLinksCell(sheet, row, col, bg, linkDefs) {
-  if (linkDefs.length === 0) {
-    sheet.getRange(row, col).setValue('—').setBackground(bg);
-    return;
-  }
-  const text = linkDefs.map(l => l.label).join('\n');
-  const rtv  = SpreadsheetApp.newRichTextValue().setText(text);
-  let pos = 0;
-  linkDefs.forEach((l, i) => {
-    try { rtv.setLinkUrl(pos, pos + l.label.length, l.url); } catch(e) {}
-    pos += l.label.length + (i < linkDefs.length - 1 ? 1 : 0);
-  });
-  try {
-    sheet.getRange(row, col).setRichTextValue(rtv.build());
-  } catch(e) {
-    sheet.getRange(row, col).setValue(text);
-  }
+  const url = LINKS_PAGE + '?' + p.join('&');
   sheet.getRange(row, col)
-    .setBackground(bg).setVerticalAlignment('top').setHorizontalAlignment('left')
-    .setFontColor(LINK_COLOR).setFontSize(9).setWrap(true);
+    .setFormula('=HYPERLINK("' + url + '","🔗 Property\nLinks")')
+    .setBackground(bg).setFontColor(LINK_COLOR).setFontSize(12).setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle').setWrap(true);
+
+  sheet.getRange(row, col + 1).setValue('').setBackground(bg);
 }
 
 // ============================================================
@@ -852,53 +744,39 @@ function fetchAllImages() {
 }
 
 // ============================================================
-// SGID PARCEL LOOKUP
+// SGID PARCEL LOOKUP — PARCEL_ID standardized across counties
 // ============================================================
 function fetchParcelFromSGID(parcelId, county) {
   if (!parcelId || !county || !SERVICES[county]) return null;
   const serviceUrl = SERVICES[county];
-  const stripped   = parcelId.replace(/^0+/, '') || '0';
-  const variants   = [
+  const variants = [...new Set([
     parcelId,
+    parcelId.replace(/-/g, ''),
     parcelId.toUpperCase(),
-    stripped,
-    parcelId + '-',
-    parcelId.replace(/-/g,''),
-    parcelId + '-0000',
-    parcelId + '-00000',
-    parcelId.replace(/-/g,'').replace(/^0+/,''),
-  ];
-  const fields     = ['PARCEL_ID','ParcelID','SERIAL','PARCELID','APN','TAX_ID','TAXID','SERIAL_NUM'];
+    parcelId.replace(/-/g, '').replace(/^0+/, ''),
+  ])];
 
-  // Phase 1: exact match
   for (const variant of variants) {
-    for (const field of fields) {
-      try {
-        const where = field + "='" + variant + "'";
-        const url   = serviceUrl + '/query?where=' + encodeURIComponent(where) + '&outFields=*&outSR=4326&f=geojson';
-        const res   = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-        const json  = JSON.parse(res.getContentText());
-        if (json.features && json.features.length > 0) {
-          return extractCoordsFromFeature(json.features[0]);
-        }
-      } catch(e) {}
-    }
-  }
-
-  // Phase 2: wildcard fallback — try prefix match (faster) then contains
-  const core = parcelId.replace(/^0+/,'');
-  for (const field of fields) {
     try {
-      const where = field + " LIKE '" + core + "%'";
-      const url   = serviceUrl + '/query?where=' + encodeURIComponent(where) + '&outFields=*&outSR=4326&f=geojson';
-      const res   = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-      const json  = JSON.parse(res.getContentText());
+      const url  = serviceUrl + '/query?where=' + encodeURIComponent("PARCEL_ID='" + variant + "'") +
+                   '&outFields=*&outSR=4326&f=geojson';
+      const json = JSON.parse(UrlFetchApp.fetch(url, { muteHttpExceptions: true }).getContentText());
       if (json.features && json.features.length > 0) {
-        Logger.log('Wildcard hit: ' + field + " LIKE '%" + core + "%'");
         return extractCoordsFromFeature(json.features[0]);
       }
     } catch(e) {}
   }
+
+  const core = parcelId.replace(/-/g, '').replace(/^0+/, '');
+  try {
+    const url  = serviceUrl + '/query?where=' + encodeURIComponent("PARCEL_ID LIKE '%" + core + "%'") +
+                 '&outFields=*&outSR=4326&f=geojson&resultRecordCount=1';
+    const json = JSON.parse(UrlFetchApp.fetch(url, { muteHttpExceptions: true }).getContentText());
+    if (json.features && json.features.length > 0) {
+      Logger.log('Wildcard hit for %' + core + '%');
+      return extractCoordsFromFeature(json.features[0]);
+    }
+  } catch(e) {}
 
   return null;
 }
@@ -916,36 +794,6 @@ function extractCoordsFromFeature(feature) {
     coords = lat + ', ' + lng;
   }
   return { coords, acres: props.ACRE || props.GIS_ACRES || '', owner: props.OWNER || props.OWN_NAME || '' };
-}
-
-function fetchParcelGeoJSON(parcelId, county) {
-  if (!parcelId || !county || !SERVICES[county]) return null;
-  const serviceUrl = SERVICES[county];
-  const stripped   = parcelId.replace(/^0+/, '') || '0';
-  const variants   = [
-    parcelId,
-    parcelId.toUpperCase(),
-    stripped,
-    parcelId + '-',
-    parcelId.replace(/-/g,''),
-    parcelId + '-0000',
-    parcelId + '-00000',
-    parcelId.replace(/-/g,'').replace(/^0+/,''),
-  ];
-  const fields     = ['PARCEL_ID','ParcelID','SERIAL','PARCELID','APN','TAX_ID','TAXID','SERIAL_NUM'];
-
-  for (const variant of variants) {
-    for (const field of fields) {
-      try {
-        const where = field + "='" + variant + "'";
-        const url   = serviceUrl + '/query?where=' + encodeURIComponent(where) + '&outFields=*&outSR=4326&f=geojson';
-        const res   = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-        const json  = JSON.parse(res.getContentText());
-        if (json.features && json.features.length > 0) return json;
-      } catch(e) {}
-    }
-  }
-  return null;
 }
 
 // ============================================================
@@ -967,185 +815,36 @@ function geocodeLocation(city, county) {
   return null;
 }
 
-
-
 // ============================================================
-// FETCH USGS WELLS — called server-side during sync
+// FETCH NEARBY WELLS — Utah DWR Well Logs (nightly updated)
+// Format: lat,lng,depth,waterRight,WIN — WIN links to drilling log
 // ============================================================
 function fetchUSGSWells(lat, lng) {
   var R    = 0.029; // ~2 miles
-  // Round to 5 decimal places to avoid floating point issues
-  var west  = Math.round((lng - R) * 100000) / 100000;
-  var south = Math.round((lat - R) * 100000) / 100000;
-  var east  = Math.round((lng + R) * 100000) / 100000;
-  var north = Math.round((lat + R) * 100000) / 100000;
-  var bbox  = west + ',' + south + ',' + east + ',' + north;
-  var url   = 'https://waterservices.usgs.gov/nwis/site/?format=rdb&siteType=GW&bbox=' + bbox +
-              '&siteStatus=all&hasDataTypeCd=gw';
-  Logger.log('USGS URL: ' + url);
+  var geom = (lng - R).toFixed(5) + ',' + (lat - R).toFixed(5) + ',' +
+             (lng + R).toFixed(5) + ',' + (lat + R).toFixed(5);
+  var url  = 'https://services.arcgis.com/ZzrwjTRez6FJiOq4/arcgis/rest/services/Utah_Well_Logs/FeatureServer/0/query' +
+             '?where=1%3D1&geometry=' + geom +
+             '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326' +
+             '&outFields=WIN,WRCHEX,Owner,Latitude,Longitude&f=json&resultRecordCount=50';
   try {
-    var res  = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-    var code = res.getResponseCode();
-    var text = res.getContentText();
-    Logger.log('USGS response code: ' + code + ', length: ' + text.length);
-    Logger.log('USGS first 200 chars: ' + text.substring(0, 200));
-
-    var allLines = text.split('\n');
-    var headers  = null;
-    var wells    = [];
-
-    for (var i = 0; i < allLines.length; i++) {
-      var line = allLines[i].trim();
-      if (!line || line.charAt(0) === '#') continue;
-      if (line.indexOf('agency_cd') === 0) { headers = line.split('\t'); continue; }
-      if (!headers) continue;
-      // Skip format descriptor rows (e.g. "5s  15s  50s...")
-      if (/^\d/.test(line) && line.indexOf('s') !== -1 && line.indexOf('USGS') === -1) continue;
-      var cols = line.split('\t');
-      if (cols.length < 5) continue;
-      // Use index directly — avoid closure issue with var
-      var latIdx   = headers.indexOf('dec_lat_va');
-      var lngIdx   = headers.indexOf('dec_long_va');
-      var idIdx    = headers.indexOf('site_no');
-      var depthIdx = headers.indexOf('well_depth_va');
-      if (latIdx < 0 || lngIdx < 0) continue;
-      var wlat  = parseFloat(cols[latIdx]  || '');
-      var wlng  = parseFloat(cols[lngIdx]  || '');
-      var id    = (cols[idIdx] || '').trim();
-      var depth = depthIdx >= 0 && cols[depthIdx] ? Math.round(parseFloat(cols[depthIdx])) : 0;
-      if (!wlat || !wlng) continue;
-      Logger.log('Well found: ' + id + ' at ' + wlat + ',' + wlng + ' depth=' + depth);
-      wells.push(wlat.toFixed(5) + ',' + wlng.toFixed(5) + ',' + depth + ',' + id.replace(/,/g,''));
-    }
-    Logger.log('USGS total wells: ' + wells.length);
+    var json  = JSON.parse(UrlFetchApp.fetch(url, { muteHttpExceptions: true }).getContentText());
+    var wells = [];
+    (json.features || []).forEach(function(ft) {
+      var a = ft.attributes || {};
+      var g = ft.geometry   || {};
+      var wlat = a.Latitude  || g.y;
+      var wlng = a.Longitude || g.x;
+      if (!wlat || !wlng) return;
+      var wr  = (a.WRCHEX || '').toString().replace(/[,|]/g, '');
+      var win = (a.WIN    || '').toString().replace(/[,|]/g, '');
+      wells.push(wlat.toFixed(5) + ',' + wlng.toFixed(5) + ',0,' + wr + ',' + win);
+    });
+    Logger.log('DWR wells found: ' + wells.length);
     return wells;
-  } catch(e) {
-    Logger.log('USGS fetch error: ' + e.message);
+  } catch (e) {
+    Logger.log('DWR wells error: ' + e.message);
     return [];
-  }
-}
-
-// ============================================================
-// DIAGNOSE PARCEL API
-// ============================================================
-function diagnoseParcelAPI() {
-  var ui     = SpreadsheetApp.getUi();
-  var r1     = ui.prompt('Diagnose Parcel API', 'Enter parcel ID (e.g. XB00-2636):', ui.ButtonSet.OK_CANCEL);
-  if (r1.getSelectedButton() !== ui.Button.OK) return;
-  var parcel = r1.getResponseText().trim();
-  var r2     = ui.prompt('Diagnose Parcel API', 'Enter county (e.g. Juab):', ui.ButtonSet.OK_CANCEL);
-  if (r2.getSelectedButton() !== ui.Button.OK) return;
-  var county = r2.getResponseText().trim();
-  var svc    = SERVICES[county];
-  var core   = parcel.replace(/-/g, '').replace(/^0+/, '');
-
-  var tests = [
-    ['Exact PARCEL_ID',         svc + '/query?where=' + encodeURIComponent("PARCEL_ID='" + parcel + "'") + '&outFields=PARCEL_ID,PARCEL_ADD&outSR=4326&f=json&resultRecordCount=3'],
-    ['PARCEL_ID prefix %',      svc + '/query?where=' + encodeURIComponent("PARCEL_ID LIKE '" + parcel + "%'") + '&outFields=PARCEL_ID,PARCEL_ADD&outSR=4326&f=json&resultRecordCount=5'],
-    ['PARCEL_ID contains core', svc + '/query?where=' + encodeURIComponent("PARCEL_ID LIKE '%" + core + "%'") + '&outFields=PARCEL_ID,PARCEL_ADD&outSR=4326&f=json&resultRecordCount=5'],
-    ['ACCOUNT_NUM exact',       svc + '/query?where=' + encodeURIComponent("ACCOUNT_NUM='" + parcel + "'") + '&outFields=PARCEL_ID,ACCOUNT_NUM,PARCEL_ADD&outSR=4326&f=json&resultRecordCount=3'],
-    ['Utah statewide',          'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/UtahStatewideParcels/FeatureServer/0/query?where=' + encodeURIComponent("PARCEL_ID='" + parcel + "'") + '&outFields=PARCEL_ID,County,PARCEL_ADD&outSR=4326&f=json&resultRecordCount=3'],
-  ];
-
-  var msg = 'Testing ' + tests.length + ' endpoints for: ' + parcel + ' (' + county + ')\n\n';
-
-  for (var i = 0; i < tests.length; i++) {
-    var label = tests[i][0];
-    var url   = tests[i][1];
-    try {
-      var res   = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-      var code  = res.getResponseCode();
-      if (code !== 200) { msg += (i+1) + '. ' + label + ': HTTP ' + code + '\n'; continue; }
-      var json  = JSON.parse(res.getContentText());
-      if (json.error) { msg += (i+1) + '. ' + label + ': ' + json.error.message + '\n'; continue; }
-      var feats = json.features || [];
-      if (feats.length > 0) {
-        msg += (i+1) + '. HIT: ' + label + ' - ' + feats.length + ' result(s)\n';
-        for (var j = 0; j < feats.length; j++) {
-          var a = feats[j].attributes || {};
-          msg += '   -> ' + (a.PARCEL_ID || '?') + ' | ' + (a.PARCEL_ADD || a.ACCOUNT_NUM || '?') + '\n';
-        }
-      } else {
-        msg += (i+1) + '. ' + label + ': no results\n';
-      }
-    } catch(e) {
-      msg += (i+1) + '. ' + label + ': ' + e.message + '\n';
-    }
-  }
-
-  ui.alert(msg);
-}
-
-
-// ============================================================
-// SGID FIELD DIAGNOSIS — run once to see Juab field names
-// ============================================================
-function diagnoseSGID() {
-  const ui = SpreadsheetApp.getUi();
-  const resp = ui.prompt('Diagnose SGID', 'Enter county name (e.g. Juab):', ui.ButtonSet.OK_CANCEL);
-  if (resp.getSelectedButton() !== ui.Button.OK) return;
-  const county = resp.getResponseText().trim();
-  if (!SERVICES[county]) { ui.alert('County not found: ' + county); return; }
-
-  // Also ask for a specific parcel to test
-  const resp2 = ui.prompt('Diagnose SGID', 'Enter parcel ID to test (optional):', ui.ButtonSet.OK_CANCEL);
-  const testParcel = resp2.getSelectedButton() === ui.Button.OK ? resp2.getResponseText().trim() : '';
-
-  try {
-    // First get sample record to see field names
-    const url  = SERVICES[county] + '/query?where=1%3D1&outFields=*&outSR=4326&f=json&resultRecordCount=1';
-    const res  = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-    const json = JSON.parse(res.getContentText());
-    if (json.error) { ui.alert('SGID error: ' + json.error.message); return; }
-    if (!json.features || json.features.length === 0) { ui.alert('No features returned for ' + county); return; }
-
-    const attrs  = json.features[0].attributes || json.features[0].properties || {};
-    const keys   = Object.keys(attrs);
-    const sample = keys.map(k => k + ': ' + attrs[k]).slice(0, 15).join('\n');
-
-    let msg = 'SGID Fields for ' + county + ' County:\n\n' + sample + '\n\n(First 15 fields shown)';
-
-    // If parcel provided, try to find it
-    if (testParcel) {
-      msg += '\n\n--- PARCEL SEARCH: ' + testParcel + ' ---\n';
-      const fields = ['PARCEL_ID','ParcelID','SERIAL','PARCELID','APN','TAX_ID','ACCOUNT_NUM'];
-      const variants = [testParcel, testParcel.toUpperCase(), testParcel.replace(/-/g,''), testParcel + '-0000'];
-      let found = false;
-      for (const v of variants) {
-        for (const f of fields) {
-          try {
-            const r2 = UrlFetchApp.fetch(SERVICES[county] + '/query?where=' + encodeURIComponent(f+"='"+v+"'") + '&outFields=PARCEL_ID,PARCEL_ADD&f=json&resultRecordCount=1', {muteHttpExceptions:true});
-            const j2 = JSON.parse(r2.getContentText());
-            if (j2.features && j2.features.length > 0) {
-              const a2 = j2.features[0].attributes || {};
-              msg += 'FOUND with ' + f + '=\'' + v + '\'\n';
-              msg += 'PARCEL_ID: ' + a2.PARCEL_ID + '\nAddress: ' + a2.PARCEL_ADD;
-              found = true; break;
-            }
-          } catch(e2) {}
-          if (found) break;
-        }
-        if (found) break;
-      }
-      // Wildcard if not found
-      if (!found) {
-        try {
-          const core = testParcel.replace(/-/g,'').replace(/^0+/,'');
-          const r3 = UrlFetchApp.fetch(SERVICES[county] + '/query?where=' + encodeURIComponent("PARCEL_ID LIKE '%"+core+"%'") + '&outFields=PARCEL_ID,PARCEL_ADD&f=json&resultRecordCount=3', {muteHttpExceptions:true});
-          const j3 = JSON.parse(r3.getContentText());
-          if (j3.features && j3.features.length > 0) {
-            msg += 'Wildcard matches for %' + core + '%:\n';
-            j3.features.forEach(ft => { const a3 = ft.attributes||{}; msg += '  ' + a3.PARCEL_ID + ' — ' + a3.PARCEL_ADD + '\n'; });
-          } else {
-            msg += 'No match found for ' + testParcel + ' or wildcard %' + core + '%';
-          }
-        } catch(e3) { msg += 'Wildcard error: ' + e3.message; }
-      }
-    }
-
-    ui.alert(msg);
-  } catch(e) {
-    ui.alert('Error: ' + e.message);
   }
 }
 
@@ -1171,11 +870,54 @@ function applyColumnFormats(showSheet, lastDataRow) {
   const n = lastDataRow - 2;
   showSheet.getRange(3, 7, n, 1).setFontSize(9).setFontColor(NAVY).setVerticalAlignment('middle');
   showSheet.getRange(3, 8, n, 1).setFontColor(TERRACOTTA);
-  showSheet.getRange(3, 9, n, 2).setFontColor(LINK_COLOR).setFontSize(9).setVerticalAlignment('middle').setWrap(true);
+  showSheet.getRange(3, 9, n, 1).setFontColor(LINK_COLOR).setVerticalAlignment('middle').setWrap(true);
   showSheet.getRange(3, 11, n, 1).setFontColor(TERRACOTTA).setFontWeight('bold');
   showSheet.getRange(3, 12, n, 1).setFontColor(TERRACOTTA).setFontWeight('bold');
 }
 
+// ============================================================
+// SGID FIELD DIAGNOSIS
+// ============================================================
+function diagnoseSGID() {
+  const ui = SpreadsheetApp.getUi();
+  const resp = ui.prompt('Diagnose SGID', 'Enter county name (e.g. Juab):', ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  const county = resp.getResponseText().trim();
+  if (!SERVICES[county]) { ui.alert('County not found: ' + county); return; }
+
+  const resp2 = ui.prompt('Diagnose SGID', 'Enter parcel ID to test (optional):', ui.ButtonSet.OK_CANCEL);
+  const testParcel = resp2.getSelectedButton() === ui.Button.OK ? resp2.getResponseText().trim() : '';
+
+  try {
+    const url  = SERVICES[county] + '/query?where=1%3D1&outFields=*&outSR=4326&f=json&resultRecordCount=1';
+    const res  = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    const json = JSON.parse(res.getContentText());
+    if (json.error) { ui.alert('SGID error: ' + json.error.message); return; }
+    if (!json.features || json.features.length === 0) { ui.alert('No features returned for ' + county); return; }
+
+    const attrs  = json.features[0].attributes || json.features[0].properties || {};
+    const keys   = Object.keys(attrs);
+    const sample = keys.map(k => k + ': ' + attrs[k]).slice(0, 15).join('\n');
+
+    let msg = 'SGID Fields for ' + county + ' County:\n\n' + sample + '\n\n(First 15 fields shown)';
+
+    if (testParcel) {
+      msg += '\n\n--- PARCEL SEARCH: ' + testParcel + ' ---\n';
+      const result = fetchParcelFromSGID(testParcel, county);
+      if (result && result.coords) {
+        msg += 'FOUND — GPS: ' + result.coords;
+        if (result.owner) msg += '\nOwner: ' + result.owner;
+        if (result.acres) msg += '\nAcres: ' + result.acres;
+      } else {
+        msg += 'No match found.';
+      }
+    }
+
+    ui.alert(msg);
+  } catch(e) {
+    ui.alert('Error: ' + e.message);
+  }
+}
 
 // ============================================================
 // DEBUG — diagnose why land rows not detected
@@ -1189,24 +931,24 @@ function debugLandDetection() {
   const blocks = parseDataBlocks(dataSheet);
   if (blocks.length === 0) { ui.alert('No blocks found — is your data in MLS Data tab?'); return; }
 
-  let msg = 'Blocks found: ' + blocks.length + '\n\n';
+  let msg = 'Script ' + APP_VERSION + ' — Blocks found: ' + blocks.length + '\n\n';
 
   blocks.forEach((block, bi) => {
     const idx = block.idx;
-    msg += 'BLOCK ' + (bi+1) + ':\n';
+    msg += 'BLOCK ' + (bi+1) + ' (header at sheet row ' + block.headerSheetRow + '):\n';
     msg += '  Rows: ' + block.rows.length + '\n';
     msg += '  acres col: ' + idx.acres + '\n';
     msg += '  sqft col: ' + idx.sqft + '\n';
     msg += '  zoning col: ' + idx.zoning + '\n';
     msg += '  mls col: ' + idx.mls + '\n';
+    msg += '  gps col: ' + idx.gpsCoords + '\n';
 
     if (block.rows.length > 0) {
       const row = block.rows[0].data;
       const safe = (j) => (j !== -1 && j < row.length && row[j] != null) ? row[j].toString().trim() : 'N/A';
       msg += '  First row MLS: ' + safe(idx.mls) + '\n';
       msg += '  First row acres: ' + safe(idx.acres) + '\n';
-      msg += '  First row zoning: ' + safe(idx.zoning) + '\n';
-      msg += '  First row sqft: ' + safe(idx.sqft) + '\n';
+      msg += '  First row county: ' + safe(idx.county) + '\n';
       msg += '  isLand: ' + isLandRow(row, idx) + '\n';
     }
     msg += '\n';
@@ -1225,11 +967,10 @@ function onEdit(e) {
   const col = e.range.getColumn();
   const row = e.range.getRow();
 
-  // Toggle Agent/Phone visibility — checkbox in J2 (col 10)
   if (col === 10 && row === 2) {
     const show = e.range.getValue() === true;
-    sheet.showColumns(11);  // K — Agent
-    sheet.showColumns(12);  // L — Phone
+    sheet.showColumns(11);
+    sheet.showColumns(12);
     if (!show) {
       sheet.hideColumns(11);
       sheet.hideColumns(12);
@@ -1237,7 +978,6 @@ function onEdit(e) {
     return;
   }
 
-  // Auto-fetch image when MLS# entered manually
   if (col === 5 && row > 2) {
     const formula  = sheet.getRange(row, 5).getFormula();
     const mlsMatch = formula.match(/"(\d{6,7})"/);
