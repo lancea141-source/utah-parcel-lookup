@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Property Links</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F4EDE4; min-height: 100vh; }
+  .wrap { max-width: 430px; margin: 0 auto; }
+  header { background: #2F3E46; padding: 20px 20px 16px; }
+  .brand { font-size: 11px; color: #C2A178; letter-spacing: 1.5px; margin-bottom: 6px; }
+  h1 { font-size: 19px; color: #F4EDE4; font-weight: 700; line-height: 1.3; }
+  .sub  { font-size: 13px; color: #C2A178; margin-top: 3px; }
+  .sub2 { font-size: 12px; color: #C2A178; margin-top: 6px; opacity: .9; }
+  main { padding: 14px 14px 24px; display: flex; flex-direction: column; gap: 10px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  a.btn {
+    display: flex; align-items: center; gap: 12px;
+    background: #fff; border: 1px solid #d8cfc0; border-radius: 14px;
+    padding: 15px 16px; text-decoration: none; color: #2F3E46;
+    -webkit-tap-highlight-color: rgba(192,101,42,.2);
+  }
+  a.btn:active { background: #f7f1e6; }
+  a.btn .ic { font-size: 22px; width: 28px; text-align: center; flex-shrink: 0; }
+  a.btn .t  { font-size: 15px; font-weight: 600; }
+  a.btn .d  { font-size: 12px; color: #8a7d6a; margin-top: 1px; }
+  a.btn .arrow { margin-left: auto; color: #8a7d6a; font-size: 14px; }
+  a.btn.small { flex-direction: column; gap: 6px; text-align: center; padding: 14px 8px; }
+  a.btn.small .arrow { display: none; }
+  a.btn.hero { background: #C0652A; border-color: #C0652A; }
+  a.btn.hero .t { color: #F4EDE4; }
+  a.btn.hero .d { color: #F4EDE4; opacity: .85; }
+  a.btn.hero .ic, a.btn.hero .arrow { color: #F4EDE4; }
+  footer { text-align: center; font-size: 11px; color: #8a7d6a; padding: 4px 0 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">LANCE THE REALTOR</div>
+    <h1 id="h-addr">Property</h1>
+    <div class="sub" id="h-sub"></div>
+    <div class="sub2" id="h-sub2"></div>
+  </header>
+  <main id="buttons"></main>
+  <footer>Lance Anderson · Equity Real Estate</footer>
+</div>
+
+<script>
+const P = new URLSearchParams(location.search);
+const g = k => (P.get(k) || '').trim();
+
+const addr   = g('addr');
+const city   = g('city');
+const county = g('county');
+const parcel = g('parcel');
+const mls    = g('mls');
+const acres  = g('acres');
+const lat    = g('lat');
+const lng    = g('lng');
+const rec    = g('rec');
+const wl     = g('wl');
+
+const esc = s => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+document.getElementById('h-addr').textContent = addr || (acres ? acres + ' acres' : 'Property');
+const subParts = [];
+if (city)   subParts.push(city + ', UT');
+if (acres)  subParts.push(acres + (parseFloat(acres) === 1 ? ' acre' : ' acres'));
+if (county) subParts.push(county + ' County');
+document.getElementById('h-sub').textContent = subParts.join(' · ');
+const sub2Parts = [];
+if (parcel) sub2Parts.push('Parcel ' + parcel);
+if (mls)    sub2Parts.push('MLS ' + mls);
+document.getElementById('h-sub2').textContent = sub2Parts.join(' · ');
+
+const gps  = (lat && lng) ? lat + ',' + lng : '';
+const BASE = 'https://lancea141-source.github.io/utah-parcel-lookup/';
+const btns = [];
+
+if (gps || (addr && city)) {
+  const q = gps || encodeURIComponent(addr + ', ' + city + ', UT');
+  btns.push({ small: true, ic: '🗺', t: 'Google Maps',
+    url: 'https://www.google.com/maps/search/?api=1&query=' + q });
+  btns.push({ small: true, ic: '🍎', t: 'Apple Maps',
+    url: gps ? 'https://maps.apple.com/?ll=' + gps + '&q=Property'
+             : 'https://maps.apple.com/?q=' + encodeURIComponent(addr + ', ' + city + ', UT') });
+}
+
+if (parcel && county && gps) {
+  btns.push({ hero: true, ic: '📐', t: 'Walk the boundary', d: 'Live GPS on the parcel lines',
+    url: BASE + 'boundary.html?parcel=' + encodeURIComponent(parcel) +
+         '&county=' + encodeURIComponent(county) + '&lat=' + lat + '&lng=' + lng });
+}
+
+if (rec) {
+  btns.push({ ic: '🏛', t: 'County records', d: 'Verify parcel at ' + (county || 'the') + ' County',
+    url: rec, ext: true });
+}
+
+if (parcel && county && gps) {
+  const n = wl ? wl.split('|').length : 0;
+  let wu = BASE + 'wells.html?parcel=' + encodeURIComponent(parcel) +
+           '&county=' + encodeURIComponent(county) + '&lat=' + lat + '&lng=' + lng;
+  if (wl) wu += '&wells=' + encodeURIComponent(wl);
+  btns.push({ ic: '💧', t: 'Nearby wells', d: n ? n + ' well log' + (n === 1 ? '' : 's') + ' within 2 miles' : 'Well logs within 2 miles',
+    url: wu });
+}
+
+if (mls) {
+  btns.push({ ic: '🏡', t: 'MLS listing', d: 'Photos, price, full details',
+    url: 'https://www.utahrealestate.com/' + encodeURIComponent(mls), ext: true });
+}
+
+let html = '';
+let i = 0;
+while (i < btns.length) {
+  const b = btns[i];
+  if (b.small && btns[i+1] && btns[i+1].small) {
+    html += '<div class="row2">' +
+      [b, btns[i+1]].map(x =>
+        '<a class="btn small" href="' + esc(x.url) + '"><span class="ic">' + x.ic +
+        '</span><span class="t">' + esc(x.t) + '</span></a>').join('') + '</div>';
+    i += 2;
+    continue;
+  }
+  html += '<a class="btn' + (b.hero ? ' hero' : '') + '" href="' + esc(b.url) + '"' +
+    (b.ext ? ' target="_blank" rel="noopener"' : '') + '>' +
+    '<span class="ic">' + b.ic + '</span><span><span class="t">' + esc(b.t) + '</span>' +
+    (b.d ? '<div class="d">' + esc(b.d) + '</div>' : '') + '</span>' +
+    '<span class="arrow">' + (b.ext ? '↗' : '›') + '</span></a>';
+  i++;
+}
+document.getElementById('buttons').innerHTML = html || '<p style="text-align:center;color:#8a7d6a;font-size:13px;padding:20px">No links available</p>';
+</script>
+</body>
+</html>
