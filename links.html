@@ -1,11 +1,16 @@
 <!DOCTYPE html>
-<!-- links.html v2 · 2026-07-11 · photo banner, call/text buttons, version badge -->
+<!-- links.html v3 · 2026-08-01 · static og:image for text previews, richer specs, wl param removed (wells.html self-fetches) -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Property Links</title>
+<title>Property Details</title>
+<meta property="og:title" content="Lance the Realtor — Property Details">
+<meta property="og:description" content="Tap for photos, pricing, directions, and parcel info.">
+<meta property="og:image" content="https://lancea141-source.github.io/utah-parcel-lookup/brand-preview.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F4EDE4; min-height: 100vh; }
@@ -14,6 +19,22 @@
   .sub  { font-size: 13px; color: #C2A178; margin-top: 3px; }
   .sub2 { font-size: 12px; color: #C2A178; margin-top: 6px; opacity: .9; }
   #hero { width: 100%; max-height: 210px; object-fit: cover; display: block; }
+
+  #pricebar {
+    background: #C0652A; color: #F4EDE4; padding: 12px 16px;
+    font-size: 1.25em; font-weight: 700; display: none;
+    align-items: center; justify-content: space-between;
+  }
+  #pricebar .status {
+    font-size: 0.55em; font-weight: normal;
+    background: rgba(244,237,228,.2); padding: 3px 10px; border-radius: 10px;
+  }
+
+  #specs { display: none; grid-template-columns: 1fr 1fr; gap: 1px; background: #ddd; }
+  .spec { background: #fff; padding: 10px 14px; }
+  .spec b { display: block; font-size: 0.68em; color: #C0652A; text-transform: uppercase; letter-spacing: .03em; }
+  .spec span { font-size: 1em; color: #2F3E46; }
+
   main { padding: 14px 14px 24px; display: flex; flex-direction: column; gap: 10px; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   a.btn {
@@ -48,31 +69,47 @@
     </div>
   </header>
   <img id="hero" alt="" style="display:none">
+  <div id="pricebar"><span id="price-txt"></span><span class="status" id="status-txt"></span></div>
+  <div id="specs"></div>
   <main id="buttons"></main>
-  <footer>Lance Anderson · Equity Real Estate · <span style="opacity:.7">links v2</span></footer>
+  <footer>Lance Anderson · Equity Real Estate · <span style="opacity:.7">links v3</span></footer>
 </div>
 
 <script>
 const P = new URLSearchParams(location.search);
 const g = k => (P.get(k) || '').trim();
 
-const addr   = g('addr');
-const city   = g('city');
-const county = g('county');
-const parcel = g('parcel');
-const mls    = g('mls');
-const acres  = g('acres');
-const lat    = g('lat');
-const lng    = g('lng');
-const rec    = g('rec');
-const wl     = g('wl');
-const img    = g('img');
+const addr    = g('addr');
+const city    = g('city');
+const county  = g('county');
+const parcel  = g('parcel');
+const mls     = g('mls');
+const acres   = g('acres');
+const lat     = g('lat');
+const lng     = g('lng');
+const rec     = g('rec');
+const img     = g('img');
+const isLand  = g('isLand') === '1';
+const price   = g('price');
+const status  = g('status');
+const dom     = g('dom');
+const zoning  = g('zoning');
+const water   = g('water');
+const utilities = g('utilities');
+const beds    = g('beds');
+const baths   = g('baths');
+const sqft    = g('sqft');
+const yearBuilt = g('yearBuilt');
+const garage  = g('garage');
+const hoa     = g('hoa');
+const ppsf    = g('ppsf');
 
 const PHONE_TEL = '8018605225';
 const PHONE_FMT = '(801) 860-5225';
 
-const esc = s => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const esc = s => (s || '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+document.title = (addr || 'Property') + (price ? ' — $' + Number(price).toLocaleString() : '');
 document.getElementById('h-addr').textContent = addr || (acres ? acres + ' acres' : 'Property');
 const subParts = [];
 if (city)   subParts.push(city + ', UT');
@@ -91,6 +128,39 @@ if (img) {
   hero.onerror = () => { hero.style.display = 'none'; };
 }
 
+// ── Price / status banner ─────────────────────────────────────
+if (price) {
+  document.getElementById('price-txt').textContent = '$' + Number(price).toLocaleString();
+  const statusEl = document.getElementById('status-txt');
+  statusEl.textContent = [status, dom ? 'DOM ' + dom : ''].filter(Boolean).join(' · ');
+  document.getElementById('pricebar').style.display = 'flex';
+}
+
+// ── Spec grid ──────────────────────────────────────────────────
+const specRows = [];
+if (isLand) {
+  if (acres)     specRows.push(['Acres', acres]);
+  if (zoning)    specRows.push(['Zoning', zoning]);
+  if (county)    specRows.push(['County', county]);
+  if (water)     specRows.push(['Water', water]);
+  if (utilities) specRows.push(['Utilities', utilities]);
+} else {
+  if (beds)      specRows.push(['Beds', beds]);
+  if (baths)     specRows.push(['Baths', baths]);
+  if (sqft)      specRows.push(['Sq Ft', sqft]);
+  if (yearBuilt) specRows.push(['Year Built', yearBuilt]);
+  if (garage)    specRows.push(['Garage', garage]);
+  if (ppsf)      specRows.push(['$/Sqft', '$' + ppsf]);
+  if (dom)       specRows.push(['DOM', dom]);
+  if (hoa)       specRows.push(['HOA', hoa]);
+}
+if (specRows.length) {
+  document.getElementById('specs').innerHTML = specRows.map(r =>
+    '<div class="spec"><b>' + esc(r[0]) + '</b><span>' + esc(r[1]) + '</span></div>').join('');
+  document.getElementById('specs').style.display = 'grid';
+}
+
+// ── Action buttons ─────────────────────────────────────────────
 const gps  = (lat && lng) ? lat + ',' + lng : '';
 const BASE = 'https://lancea141-source.github.io/utah-parcel-lookup/';
 const btns = [];
@@ -116,12 +186,9 @@ if (rec) {
 }
 
 if (parcel && county && gps) {
-  const n = wl ? wl.split('|').length : 0;
-  let wu = BASE + 'wells.html?parcel=' + encodeURIComponent(parcel) +
-           '&county=' + encodeURIComponent(county) + '&lat=' + lat + '&lng=' + lng;
-  if (wl) wu += '&wells=' + encodeURIComponent(wl);
-  btns.push({ ic: '💧', t: 'Nearby wells', d: n ? n + ' well log' + (n === 1 ? '' : 's') + ' within 2 miles' : 'Well logs within 2 miles',
-    url: wu });
+  btns.push({ ic: '💧', t: 'Nearby wells', d: 'Well logs within 2 miles',
+    url: BASE + 'wells.html?parcel=' + encodeURIComponent(parcel) +
+         '&county=' + encodeURIComponent(county) + '&lat=' + lat + '&lng=' + lng });
 }
 
 if (mls) {
@@ -142,7 +209,7 @@ while (i < btns.length) {
     continue;
   }
   html += '<a class="btn' + (b.hero ? ' hero' : '') + '" href="' + esc(b.url) + '"' +
-    (b.ext ? ' target="_blank" rel="noopener"' : '') + '>' +
+    (b.ext ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' +
     '<span class="ic">' + b.ic + '</span><span><span class="t">' + esc(b.t) + '</span>' +
     (b.d ? '<div class="d">' + esc(b.d) + '</div>' : '') + '</span>' +
     '<span class="arrow">' + (b.ext ? '↗' : '›') + '</span></a>';
