@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- wells.html v2 · 2026-07-11 · Utah DWR well logs (USGS retired) — drilling log links, 💧 pins, water right numbers -->
+<!-- wells.html v3 · 2026-08-01 · fetches wells client-side by lat/lng (no more huge 'wells' param needed) -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -104,7 +104,7 @@
   <div class="leg-row"><div class="dot" style="background:#1a6fc4;border:2px solid white;"></div> Well log</div>
   <div class="leg-row"><div class="dot" style="background:#C0652A;border:2px solid white;"></div> Parcel</div>
   <div class="leg-row"><div class="dot" style="background:#4285F4;border:2px solid white;"></div> You</div>
-  <div class="ver">wells v2 · Utah DWR</div>
+  <div class="ver">wells v3 · Utah DWR</div>
 </div>
 
 <div id="well-count"></div>
@@ -143,6 +143,9 @@ const SGID_SERVICES = {
   'Carbon':'Parcels_Carbon','Box Elder':'Parcels_BoxElder',
 };
 const SGID_BASE = 'https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/';
+
+// ── DWR Well Logs service (same one the sheet script queries) ─
+const WELLS_SVC = 'https://services.arcgis.com/ZzrwjTRez6FJiOq4/arcgis/rest/services/Utah_Well_Logs/FeatureServer/0/query';
 
 // ── Well icon ────────────────────────────────────────────────
 function wellIcon(depth) {
@@ -197,8 +200,6 @@ if (navigator.geolocation) {
 $('card-title').textContent = parcel || 'Well Finder';
 $('card-meta').textContent  = county ? county + ' County' : '';
 
-const wellsParam = params.get('wells') || '';
-
 // ── Parcel boundary ──────────────────────────────────────────
 let boundaryLayer = null;
 
@@ -218,36 +219,44 @@ async function fetchBoundary() {
   }
 }
 
-// ── Plot wells from URL params ───────────────────────────────
-// Format: lat,lng,depth,waterRight[,WIN] entries joined by |
-// WIN (5th field) links straight to the DWR drilling log.
-function loadWellsFromParams() {
-  if (!wellsParam) return 0;
-  const entries = wellsParam.split('|');
+// ── Fetch nearby wells directly (no more huge 'wells' URL param) ──
+// Same ~2-mile bbox query the sheet script uses server-side.
+async function fetchWells() {
+  if (!initLat || !initLng) return 0;
+  const R = 0.029; // ~2 miles
+  const geom = (initLng - R).toFixed(5) + ',' + (initLat - R).toFixed(5) + ',' +
+               (initLng + R).toFixed(5) + ',' + (initLat + R).toFixed(5);
+  const url = WELLS_SVC + '?where=1%3D1&geometry=' + geom +
+              '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326' +
+              '&outFields=WIN,WRCHEX,Owner,Latitude,Longitude&f=json&resultRecordCount=50';
   let count = 0;
-  for (const entry of entries) {
-    const parts = entry.split(',');
-    if (parts.length < 4) continue;
-    const lat   = parseFloat(parts[0]);
-    const lng   = parseFloat(parts[1]);
-    const depth = parseInt(parts[2]) || 0;
-    const wr    = parts[3] || '';
-    const win   = parts[4] || '';
-    if (!lat || !lng) continue;
-    const dist  = (Math.sqrt(Math.pow((lat-initLat)*69,2)+Math.pow((lng-initLng)*53,2))).toFixed(1);
-    let popup = '<div class="well-popup">' +
-      '<div class="well-title">💧 Well log · Utah DWR</div>';
-    if (wr)        popup += '<div class="well-row"><span class="well-label">Water right</span><span class="well-val">' + esc(wr) + '</span></div>';
-    if (depth > 0) popup += '<div class="well-row"><span class="well-label">Depth</span><span class="well-val">' + depth + ' ft</span></div>';
-    popup += '<div class="well-row"><span class="well-label">~Distance</span><span class="well-val">' + dist + ' mi</span></div>';
-    if (win) {
-      popup += '<a class="well-link" href="https://waterrights.utah.gov/wellinfo/welldrilling/wlbrowse.asp?WIN=' + encodeURIComponent(win) + '" target="_blank" rel="noopener">View drilling log →</a>';
-    } else if (wr) {
-      popup += '<a class="well-link" href="https://waterrights.utah.gov/asp_apps/generalinfo/generalinfo.asp?RECORD_ID=' + encodeURIComponent(wr) + '" target="_blank" rel="noopener">Look up water right →</a>';
-    }
-    popup += '</div>';
-    L.marker([lat,lng], { icon: wellIcon(depth) }).addTo(map).bindPopup(popup);
-    count++;
+  try {
+    const res  = await fetch(url);
+    const json = await res.json();
+    (json.features || []).forEach(ft => {
+      const a = ft.attributes || {};
+      const g = ft.geometry   || {};
+      const wlat = a.Latitude  || g.y;
+      const wlng = a.Longitude || g.x;
+      if (!wlat || !wlng) return;
+      const wr  = (a.WRCHEX || '').toString().replace(/[,|]/g, '');
+      const win = (a.WIN    || '').toString().replace(/[,|]/g, '');
+      const dist = (Math.sqrt(Math.pow((wlat-initLat)*69,2)+Math.pow((wlng-initLng)*53,2))).toFixed(1);
+      let popup = '<div class="well-popup">' +
+        '<div class="well-title">💧 Well log · Utah DWR</div>';
+      if (wr)  popup += '<div class="well-row"><span class="well-label">Water right</span><span class="well-val">' + esc(wr) + '</span></div>';
+      popup += '<div class="well-row"><span class="well-label">~Distance</span><span class="well-val">' + dist + ' mi</span></div>';
+      if (win) {
+        popup += '<a class="well-link" href="https://waterrights.utah.gov/wellinfo/welldrilling/wlbrowse.asp?WIN=' + encodeURIComponent(win) + '" target="_blank" rel="noopener">View drilling log →</a>';
+      } else if (wr) {
+        popup += '<a class="well-link" href="https://waterrights.utah.gov/asp_apps/generalinfo/generalinfo.asp?RECORD_ID=' + encodeURIComponent(wr) + '" target="_blank" rel="noopener">Look up water right →</a>';
+      }
+      popup += '</div>';
+      L.marker([wlat,wlng], { icon: wellIcon(0) }).addTo(map).bindPopup(popup);
+      count++;
+    });
+  } catch(e) {
+    showError('Well data unavailable right now.');
   }
   return count;
 }
@@ -257,8 +266,8 @@ async function init() {
   setMsg('Loading parcel boundary...');
   await fetchBoundary();
   map.setView([initLat, initLng], 13);
-  setMsg('Plotting wells...');
-  const total = loadWellsFromParams();
+  setMsg('Finding nearby wells...');
+  const total = await fetchWells();
   $('loading').style.display = 'none';
   if (total > 0) {
     $('well-count').textContent = '💧 ' + total + ' well log' + (total===1?'':'s') + ' nearby';
