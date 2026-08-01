@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- links.html v3 · 2026-08-01 · static og:image for text previews, richer specs, wl param removed (wells.html self-fetches) -->
+<!-- links.html v4 · 2026-08-01 · odd-count spec grid item now spans full width (no empty box) -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -32,6 +32,7 @@
 
   #specs { display: none; grid-template-columns: 1fr 1fr; gap: 1px; background: #ddd; }
   .spec { background: #fff; padding: 10px 14px; }
+  .spec.wide { grid-column: 1 / -1; }
   .spec b { display: block; font-size: 0.68em; color: #C0652A; text-transform: uppercase; letter-spacing: .03em; }
   .spec span { font-size: 1em; color: #2F3E46; }
 
@@ -72,7 +73,7 @@
   <div id="pricebar"><span id="price-txt"></span><span class="status" id="status-txt"></span></div>
   <div id="specs"></div>
   <main id="buttons"></main>
-  <footer>Lance Anderson · Equity Real Estate · <span style="opacity:.7">links v3</span></footer>
+  <footer>Lance Anderson · Equity Real Estate · <span style="opacity:.7">links v4</span></footer>
 </div>
 
 <script>
@@ -155,8 +156,10 @@ if (isLand) {
   if (hoa)       specRows.push(['HOA', hoa]);
 }
 if (specRows.length) {
-  document.getElementById('specs').innerHTML = specRows.map(r =>
-    '<div class="spec"><b>' + esc(r[0]) + '</b><span>' + esc(r[1]) + '</span></div>').join('');
+  document.getElementById('specs').innerHTML = specRows.map((r, i) => {
+    const isLastOdd = (i === specRows.length - 1) && (specRows.length % 2 === 1);
+    return '<div class="spec' + (isLastOdd ? ' wide' : '') + '"><b>' + esc(r[0]) + '</b><span>' + esc(r[1]) + '</span></div>';
+  }).join('');
   document.getElementById('specs').style.display = 'grid';
 }
 
