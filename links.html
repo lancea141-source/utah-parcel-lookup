@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- links.html v4 · 2026-08-01 · odd-count spec grid item now spans full width (no empty box) -->
+<!-- links.html v5 · merged land/residential spec grid, GPS + Est. Taxes shown, boundary/wells/records work for any property type -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -73,7 +73,7 @@
   <div id="pricebar"><span id="price-txt"></span><span class="status" id="status-txt"></span></div>
   <div id="specs"></div>
   <main id="buttons"></main>
-  <footer>Lance Anderson · Equity Real Estate · <span style="opacity:.7">links v4</span></footer>
+  <footer>Lance Anderson · Equity Real Estate · <span style="opacity:.7">links v5</span></footer>
 </div>
 
 <script>
@@ -104,6 +104,7 @@ const yearBuilt = g('yearBuilt');
 const garage  = g('garage');
 const hoa     = g('hoa');
 const ppsf    = g('ppsf');
+const estTaxes = g('estTaxes');
 
 const PHONE_TEL = '8018605225';
 const PHONE_FMT = '(801) 860-5225';
@@ -138,23 +139,24 @@ if (price) {
 }
 
 // ── Spec grid ──────────────────────────────────────────────────
+// Shows both residential and land specs whenever each has data —
+// a cabin on 10 acres has both and shouldn't have either hidden.
 const specRows = [];
-if (isLand) {
-  if (acres)     specRows.push(['Acres', acres]);
-  if (zoning)    specRows.push(['Zoning', zoning]);
-  if (county)    specRows.push(['County', county]);
-  if (water)     specRows.push(['Water', water]);
-  if (utilities) specRows.push(['Utilities', utilities]);
-} else {
-  if (beds)      specRows.push(['Beds', beds]);
-  if (baths)     specRows.push(['Baths', baths]);
-  if (sqft)      specRows.push(['Sq Ft', sqft]);
-  if (yearBuilt) specRows.push(['Year Built', yearBuilt]);
-  if (garage)    specRows.push(['Garage', garage]);
-  if (ppsf)      specRows.push(['$/Sqft', '$' + ppsf]);
-  if (dom)       specRows.push(['DOM', dom]);
-  if (hoa)       specRows.push(['HOA', hoa]);
-}
+if (beds)      specRows.push(['Beds', beds]);
+if (baths)     specRows.push(['Baths', baths]);
+if (sqft)      specRows.push(['Sq Ft', sqft]);
+if (yearBuilt) specRows.push(['Year Built', yearBuilt]);
+if (garage)    specRows.push(['Garage', garage]);
+if (ppsf)      specRows.push(['$/Sqft', '$' + ppsf]);
+if (dom)       specRows.push(['DOM', dom]);
+if (acres)     specRows.push(['Acres', acres]);
+if (zoning)    specRows.push(['Zoning', zoning]);
+if (county)    specRows.push(['County', county]);
+if (water)     specRows.push(['Water', water]);
+if (utilities) specRows.push(['Utilities', utilities]);
+if (estTaxes)  specRows.push(['Est. Taxes', '$' + estTaxes]);
+if (hoa)       specRows.push(['HOA', hoa]);
+if (lat && lng) specRows.push(['GPS', lat + ', ' + lng]);
 if (specRows.length) {
   document.getElementById('specs').innerHTML = specRows.map((r, i) => {
     const isLastOdd = (i === specRows.length - 1) && (specRows.length % 2 === 1);
